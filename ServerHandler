@@ -78,12 +78,12 @@ local function createSlotJuiceTool(player, juiceFolder, slotNumber)
 	local cancelToken = tick()
 	SlotTracker.setSlotData(userId, slotNumber, { cancelToken = cancelToken })
 
-	-- Esperar a que el slot model esté disponible
-	task.wait(0.3)
+	-- ⚡ OPTIMIZADO: Removido task.wait(0.3) innecesario
+	-- El slot model ya está garantizado por WaitForChild en recreateAllJuicesForNewModel
 
-	-- VERIFICAR DESPUÉS DEL WAIT
+	-- Verificar que el jugador todavía existe
 	if not SlotTracker.hasPlayerData(userId) then
-		print("[PlacedJuices] Jugador desconectado durante wait")
+		print("[PlacedJuices] Jugador desconectado")
 		return
 	end
 
@@ -389,28 +389,14 @@ recreateAllJuicesForNewModel = function(player, newModel)
 	SlotTracker.clearCollectZoneConnection(userId)
 	SlotTracker.clearCollectZoneGuiConnection(userId)
 
-	-- Esperar a que el modelo esté completamente cargado
-	print("[PlacedJuices] ⏳ Esperando carga del modelo...")
-	task.wait(3) -- Espera inicial generosa
+	-- ⚡ OPTIMIZADO: Usar WaitForChild en lugar de loops con esperas
+	-- El evento ChildAdded garantiza que el modelo ya existe, solo esperamos hijos internos
+	print("[PlacedJuices] 🔍 Buscando estructura del modelo...")
 
-	-- Verificar que el modelo sigue existiendo
-	if not newModel or not newModel.Parent then
-		warn("[PlacedJuices] ❌ Modelo fue eliminado durante la espera")
-		return
-	end
-
-	-- Buscar estructura del modelo con espera activa
-	local slotsFolder = newModel:FindFirstChild("Slots")
-	local attempts = 0
-	while not slotsFolder and attempts < 20 and newModel.Parent do
-		task.wait(0.5)
-		slotsFolder = newModel:FindFirstChild("Slots")
-		attempts = attempts + 1
-		print(string.format("[PlacedJuices] ⏳ Esperando Slots... intento %d/20", attempts))
-	end
-
+	-- Buscar Slots (con timeout corto)
+	local slotsFolder = newModel:WaitForChild("Slots", 5)
 	if not slotsFolder then
-		warn("[PlacedJuices] ❌ CRÍTICO: Slots no encontrado después de 10 segundos")
+		warn("[PlacedJuices] ❌ CRÍTICO: Slots no encontrado")
 		warn("[PlacedJuices] Hijos del modelo:", table.concat((function()
 			local names = {}
 			for _, child in ipairs(newModel:GetChildren()) do
@@ -420,32 +406,21 @@ recreateAllJuicesForNewModel = function(player, newModel)
 		end)(), ", "))
 		return
 	end
-
 	print("[PlacedJuices] ✅ Slots encontrado")
 
-	-- Buscar Place
-	local placeFolder = slotsFolder:FindFirstChild("Place")
-	attempts = 0
-	while not placeFolder and attempts < 20 and newModel.Parent do
-		task.wait(0.5)
-		placeFolder = slotsFolder:FindFirstChild("Place")
-		attempts = attempts + 1
-		print(string.format("[PlacedJuices] ⏳ Esperando Place... intento %d/20", attempts))
-	end
-
+	-- Buscar Place (con timeout corto)
+	local placeFolder = slotsFolder:WaitForChild("Place", 5)
 	if not placeFolder then
 		warn("[PlacedJuices] ❌ CRÍTICO: Place no encontrado")
 		return
 	end
-
 	print("[PlacedJuices] ✅ Place encontrado")
 	print("[PlacedJuices] 📊 Slots disponibles:", #placeFolder:GetChildren())
 
-	-- Espera adicional para slots individuales
-	task.wait(2)
+	-- Buscar CollectZone (con timeout corto)
+	local collectZone = slotsFolder:WaitForChild("CollectZone", 5)
 
-	-- Create loading billboard in CollectZone
-	local collectZone = slotsFolder:FindFirstChild("CollectZone")
+	-- ⚡ INSTANTÁNEO: Crear loading billboard INMEDIATAMENTE
 	local loadingBillboard = nil
 	if collectZone then
 		loadingBillboard = JuiceVisuals.createLoadingBillboard(collectZone)
@@ -485,25 +460,23 @@ recreateAllJuicesForNewModel = function(player, newModel)
 	for i, juiceInfo in ipairs(juicesToRecreate) do
 		if not SlotTracker.hasPlayerData(userId) or not newModel.Parent then
 			print("[PlacedJuices] ❌ Abortando recreación")
+			-- Remove loading billboard before aborting
+			if loadingBillboard then
+				JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+			end
 			return
 		end
 
 		print(string.format("[PlacedJuices] [%d/%d] 🔨 Recreando '%s' en slot %d",
 			i, #juicesToRecreate, juiceInfo.name, juiceInfo.slot))
 
-		-- Buscar slot con espera activa
-		local slotModel = placeFolder:FindFirstChild(tostring(juiceInfo.slot))
-		local slotAttempts = 0
-		while not slotModel and slotAttempts < 10 and newModel.Parent do
-			task.wait(0.5)
-			slotModel = placeFolder:FindFirstChild(tostring(juiceInfo.slot))
-			slotAttempts = slotAttempts + 1
-		end
+		-- ⚡ INSTANTÁNEO: Usar WaitForChild con timeout corto en lugar de loop
+		local slotModel = placeFolder:WaitForChild(tostring(juiceInfo.slot), 2)
 
 		if slotModel then
 			print(string.format("[PlacedJuices] ✅ Slot %d OK, creando jugo...", juiceInfo.slot))
 			processPlacedJuice(player, juiceInfo.folder)
-			task.wait(0.2)
+			-- ⚡ REMOVIDO: task.wait(0.2) innecesario entre jugos
 		else
 			warn(string.format("[PlacedJuices] ❌ Slot %d NO ENCONTRADO", juiceInfo.slot))
 		end
@@ -511,23 +484,10 @@ recreateAllJuicesForNewModel = function(player, newModel)
 
 	print(string.format("[PlacedJuices] ✅ Recreación completada: %d jugos", #juicesToRecreate))
 
-	-- Reconectar CollectZone
+	-- ⚡ INSTANTÁNEO: Reconectar CollectZone sin esperas innecesarias
 	print("[PlacedJuices] 🔌 Reconectando CollectZone...")
-	task.wait(1)
 
-	-- Note: collectZone is already found above, but we need to re-find it
-	-- in case the variable scope changed
-	if not collectZone then
-		collectZone = slotsFolder:FindFirstChild("CollectZone")
-	end
-
-	attempts = 0
-	while not collectZone and attempts < 10 and newModel.Parent do
-		task.wait(0.5)
-		collectZone = slotsFolder:FindFirstChild("CollectZone")
-		attempts = attempts + 1
-	end
-
+	-- CollectZone ya fue encontrado arriba con WaitForChild
 	if collectZone then
 		print("[PlacedJuices] ✅ CollectZone encontrada, conectando...")
 		connectCollectZoneEvent(player)
