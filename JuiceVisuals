@@ -7,6 +7,7 @@ local GradientEffects = require(ReplicatedStorage:WaitForChild("Modules"):WaitFo
 
 local juiceVFX = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("VFX"):WaitForChild("Juice")
 local infoGuiTemplate = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("GUI"):WaitForChild("Billboards"):WaitForChild("InfoGui")
+local loadingBillboardTemplate = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("GUI"):WaitForChild("Billboards"):WaitForChild("Loading")
 
 function JuiceVisuals.mixColors(colors)
 	if #colors == 0 then
@@ -218,6 +219,99 @@ function JuiceVisuals.cleanupSlotVisuals(placeSlotModel)
 			end
 		end
 	end
+end
+
+--------------------------------------------------------------
+-- LOADING BILLBOARD FUNCTIONS
+--------------------------------------------------------------
+
+function JuiceVisuals.createLoadingBillboard(collectZone)
+	if not collectZone then return nil end
+
+	local basePart = collectZone:FindFirstChild("Base")
+	if not basePart or not basePart:IsA("BasePart") then
+		warn("[JuiceVisuals] CollectZone Base part not found")
+		return nil
+	end
+
+	-- Clone the loading billboard
+	local loadingBillboard = loadingBillboardTemplate:Clone()
+	loadingBillboard.Name = "LoadingBillboard"
+	loadingBillboard.Parent = basePart
+
+	-- Find the Data TextLabel
+	local infoFrame = loadingBillboard:FindFirstChild("Info")
+	if infoFrame then
+		local dataLabel = infoFrame:FindFirstChild("Data")
+		if dataLabel and dataLabel:IsA("TextLabel") then
+			dataLabel.Text = "Loading Data..."
+		end
+	end
+
+	return loadingBillboard
+end
+
+function JuiceVisuals.startLoadingPulse(loadingBillboard)
+	if not loadingBillboard then return nil end
+
+	local infoFrame = loadingBillboard:FindFirstChild("Info")
+	if not infoFrame then return nil end
+
+	local dataLabel = infoFrame:FindFirstChild("Data")
+	if not dataLabel or not dataLabel:IsA("TextLabel") then return nil end
+
+	-- Create a flag to control the animation
+	local isRunning = Instance.new("BoolValue")
+	isRunning.Name = "PulseRunning"
+	isRunning.Value = true
+	isRunning.Parent = loadingBillboard
+
+	-- Start the pulse animation
+	task.spawn(function()
+		local TweenService = game:GetService("TweenService")
+		local tweenInfo = TweenInfo.new(
+			0.8, -- Duration
+			Enum.EasingStyle.Sine,
+			Enum.EasingDirection.InOut,
+			-1, -- Repeat infinitely
+			true -- Reverse
+		)
+
+		local fadeGoal = {TextTransparency = 0.5}
+		local fadeTween = TweenService:Create(dataLabel, tweenInfo, fadeGoal)
+
+		fadeTween:Play()
+
+		-- Store the tween for cleanup
+		local tweenValue = Instance.new("ObjectValue")
+		tweenValue.Name = "PulseTween"
+		tweenValue.Value = fadeTween
+		tweenValue.Parent = loadingBillboard
+
+		-- Wait until the flag is set to false
+		while isRunning.Value and loadingBillboard.Parent do
+			task.wait(0.1)
+		end
+
+		-- Stop the animation
+		fadeTween:Cancel()
+	end)
+
+	return isRunning
+end
+
+function JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+	if not loadingBillboard or not loadingBillboard.Parent then return end
+
+	-- Stop the pulse animation
+	local pulseRunning = loadingBillboard:FindFirstChild("PulseRunning")
+	if pulseRunning and pulseRunning:IsA("BoolValue") then
+		pulseRunning.Value = false
+	end
+
+	-- Destroy the billboard
+	task.wait(0.1) -- Small delay to let the animation stop
+	loadingBillboard:Destroy()
 end
 
 return JuiceVisuals
