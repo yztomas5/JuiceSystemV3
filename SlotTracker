@@ -1,0 +1,390 @@
+local SlotTracker = {}
+
+local playerData = {}
+
+function SlotTracker.initializeJuiceData(userId)
+	if not playerData[userId] then
+		playerData[userId] = {}
+	end
+
+	playerData[userId].slots = playerData[userId].slots or {}
+	playerData[userId].connections = playerData[userId].connections or {}
+	playerData[userId].cooldowns = playerData[userId].cooldowns or {}
+	playerData[userId].slotConnections = playerData[userId].slotConnections or {}
+	playerData[userId].modelConnections = playerData[userId].modelConnections or {}
+	playerData[userId].collectZoneConnection = nil
+	playerData[userId].collectZoneGuiConnection = nil
+	playerData[userId].currentModel = nil
+
+	return playerData[userId]
+end
+
+
+function SlotTracker.initializePurchaseData(userId)
+	if not playerData[userId] then
+		playerData[userId] = {}
+	end
+
+	playerData[userId].buySlots = playerData[userId].buySlots or {}
+	playerData[userId].placeSlots = playerData[userId].placeSlots or {}
+	playerData[userId].modelConnections = playerData[userId].modelConnections or {}
+	playerData[userId].currentModel = nil
+
+	return playerData[userId]
+end
+
+function SlotTracker.getPlayerData(userId)
+	return playerData[userId]
+end
+
+function SlotTracker.hasPlayerData(userId)
+	return playerData[userId] ~= nil
+end
+
+function SlotTracker.getSlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].slots then return nil end
+	return playerData[userId].slots[slotNumber]
+end
+
+function SlotTracker.getBuySlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].buySlots then return nil end
+	return playerData[userId].buySlots[slotNumber]
+end
+
+function SlotTracker.getPlaceSlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].placeSlots then return nil end
+	return playerData[userId].placeSlots[slotNumber]
+end
+
+function SlotTracker.setSlotData(userId, slotNumber, data)
+	if not playerData[userId] then
+		SlotTracker.initializeJuiceData(userId)
+	end
+
+	if not playerData[userId].slots[slotNumber] then
+		playerData[userId].slots[slotNumber] = {}
+	end
+
+	for key, value in pairs(data) do
+		playerData[userId].slots[slotNumber][key] = value
+	end
+end
+
+function SlotTracker.clearSlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].slots then return end
+
+	local slotData = playerData[userId].slots[slotNumber]
+	if not slotData then return end
+
+	slotData.tool = nil
+	slotData.billboard = nil
+	slotData.juiceFolder = nil
+	slotData.cancelToken = nil
+
+	if slotData.collectConnection then
+		pcall(function()
+			slotData.collectConnection:Disconnect()
+		end)
+		slotData.collectConnection = nil
+	end
+
+	playerData[userId].slots[slotNumber] = nil
+
+	if playerData[userId].cooldowns then
+		playerData[userId].cooldowns[slotNumber] = nil
+	end
+end
+
+function SlotTracker.clearSlotDataWithDestruction(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].slots then return end
+
+	local slotData = playerData[userId].slots[slotNumber]
+	if not slotData then return end
+
+	if slotData.tool and slotData.tool.Parent then
+		pcall(function()
+			slotData.tool:Destroy()
+		end)
+	end
+
+	if slotData.billboard and slotData.billboard.Parent then
+		pcall(function()
+			slotData.billboard:Destroy()
+		end)
+	end
+
+	if slotData.collectConnection then
+		pcall(function()
+			slotData.collectConnection:Disconnect()
+		end)
+	end
+
+	playerData[userId].slots[slotNumber] = nil
+
+	if playerData[userId].cooldowns then
+		playerData[userId].cooldowns[slotNumber] = nil
+	end
+
+end
+
+function SlotTracker.setBuySlotData(userId, slotNumber, data)
+	if not playerData[userId] then
+		SlotTracker.initializePurchaseData(userId)
+	end
+
+	if not playerData[userId].buySlots[slotNumber] then
+		playerData[userId].buySlots[slotNumber] = {}
+	end
+
+	for key, value in pairs(data) do
+		playerData[userId].buySlots[slotNumber][key] = value
+	end
+end
+
+function SlotTracker.clearBuySlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].buySlots then return end
+
+	local slotData = playerData[userId].buySlots[slotNumber]
+	if not slotData then return end
+
+	if slotData.billboard and slotData.billboard.Parent then
+		slotData.billboard:Destroy()
+	end
+
+	if slotData.connection then
+		pcall(function()
+			slotData.connection:Disconnect()
+		end)
+	end
+
+	playerData[userId].buySlots[slotNumber] = nil
+end
+
+function SlotTracker.setPlaceSlotData(userId, slotNumber, data)
+	if not playerData[userId] then
+		SlotTracker.initializePurchaseData(userId)
+	end
+
+	if not playerData[userId].placeSlots[slotNumber] then
+		playerData[userId].placeSlots[slotNumber] = {}
+	end
+
+	for key, value in pairs(data) do
+		playerData[userId].placeSlots[slotNumber][key] = value
+	end
+end
+
+function SlotTracker.clearPlaceSlotData(userId, slotNumber)
+	if not playerData[userId] or not playerData[userId].placeSlots then return end
+
+	local slotData = playerData[userId].placeSlots[slotNumber]
+	if not slotData then return end
+
+	if slotData.proximityPrompt and slotData.proximityPrompt.Parent then
+		slotData.proximityPrompt:Destroy()
+	end
+
+	if slotData.connection then
+		pcall(function()
+			slotData.connection:Disconnect()
+		end)
+	end
+
+	playerData[userId].placeSlots[slotNumber] = nil
+end
+
+function SlotTracker.setSlotConnection(userId, juiceFolder, connection)
+	if not playerData[userId] then return end
+	if not playerData[userId].slotConnections then
+		playerData[userId].slotConnections = {}
+	end
+
+	playerData[userId].slotConnections[juiceFolder] = connection
+end
+
+function SlotTracker.clearSlotConnection(userId, juiceFolder)
+	if not playerData[userId] or not playerData[userId].slotConnections then return end
+
+	local connection = playerData[userId].slotConnections[juiceFolder]
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+		playerData[userId].slotConnections[juiceFolder] = nil
+	end
+end
+
+function SlotTracker.setCollectZoneConnection(userId, connection)
+	if not playerData[userId] then return end
+	playerData[userId].collectZoneConnection = connection
+end
+
+function SlotTracker.clearCollectZoneConnection(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].collectZoneConnection then
+		pcall(function()
+			playerData[userId].collectZoneConnection:Disconnect()
+		end)
+		playerData[userId].collectZoneConnection = nil
+	end
+end
+
+function SlotTracker.setCollectZoneGuiConnection(userId, connection)
+	if not playerData[userId] then return end
+	playerData[userId].collectZoneGuiConnection = connection
+end
+
+function SlotTracker.clearCollectZoneGuiConnection(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].collectZoneGuiConnection then
+		pcall(function()
+			playerData[userId].collectZoneGuiConnection:Disconnect()
+		end)
+		playerData[userId].collectZoneGuiConnection = nil
+	end
+end
+
+function SlotTracker.setModelMonitorConnection(userId, connection)
+	if not playerData[userId] then return end
+	playerData[userId].modelMonitorConnection = connection
+end
+
+function SlotTracker.clearModelMonitorConnection(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].modelMonitorConnection then
+		pcall(function()
+			playerData[userId].modelMonitorConnection:Disconnect()
+		end)
+		playerData[userId].modelMonitorConnection = nil
+	end
+end
+
+function SlotTracker.addModelConnection(userId, connection)
+	if not playerData[userId] then return end
+	if not playerData[userId].modelConnections then
+		playerData[userId].modelConnections = {}
+	end
+
+	table.insert(playerData[userId].modelConnections, connection)
+end
+
+function SlotTracker.clearModelConnections(userId)
+	if not playerData[userId] or not playerData[userId].modelConnections then return end
+
+	for _, connection in ipairs(playerData[userId].modelConnections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+
+	playerData[userId].modelConnections = {}
+end
+
+function SlotTracker.setCurrentModel(userId, model)
+	if not playerData[userId] then return end
+	playerData[userId].currentModel = model
+end
+
+function SlotTracker.getCurrentModel(userId)
+	if not playerData[userId] then return nil end
+	return playerData[userId].currentModel
+end
+
+function SlotTracker.setCooldown(userId, identifier, time)
+	if not playerData[userId] then return end
+	if not playerData[userId].cooldowns then
+		playerData[userId].cooldowns = {}
+	end
+
+	playerData[userId].cooldowns[identifier] = time or tick()
+end
+
+function SlotTracker.getCooldown(userId, identifier)
+	if not playerData[userId] or not playerData[userId].cooldowns then return nil end
+	return playerData[userId].cooldowns[identifier]
+end
+
+function SlotTracker.isOnCooldown(userId, identifier, cooldownDuration)
+	local lastTime = SlotTracker.getCooldown(userId, identifier)
+	if not lastTime then return false end
+
+	local currentTime = tick()
+	return (currentTime - lastTime) < cooldownDuration
+end
+
+function SlotTracker.cleanupJuiceData(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].slots then
+		for slotNumber in pairs(playerData[userId].slots) do
+			SlotTracker.clearSlotData(userId, slotNumber)
+		end
+	end
+
+	if playerData[userId].slotConnections then
+		for juiceFolder, connection in pairs(playerData[userId].slotConnections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		playerData[userId].slotConnections = {}
+	end
+
+	SlotTracker.clearModelConnections(userId)
+
+	SlotTracker.clearCollectZoneConnection(userId)
+	SlotTracker.clearCollectZoneGuiConnection(userId)
+
+	SlotTracker.clearModelMonitorConnection(userId)
+end
+
+function SlotTracker.cleanupAllSlotsWithDestruction(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].slots then
+		for slotNumber in pairs(playerData[userId].slots) do
+			SlotTracker.clearSlotDataWithDestruction(userId, slotNumber)
+		end
+	end
+
+	if playerData[userId].slotConnections then
+		for juiceFolder, connection in pairs(playerData[userId].slotConnections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		playerData[userId].slotConnections = {}
+	end
+
+end
+
+function SlotTracker.cleanupPurchaseData(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].buySlots then
+		for slotNumber in pairs(playerData[userId].buySlots) do
+			SlotTracker.clearBuySlotData(userId, slotNumber)
+		end
+	end
+
+	if playerData[userId].placeSlots then
+		for slotNumber in pairs(playerData[userId].placeSlots) do
+			SlotTracker.clearPlaceSlotData(userId, slotNumber)
+		end
+	end
+
+	SlotTracker.clearModelConnections(userId)
+end
+
+function SlotTracker.removePlayer(userId)
+	if playerData[userId] then
+		SlotTracker.cleanupJuiceData(userId)
+		SlotTracker.cleanupPurchaseData(userId)
+		playerData[userId] = nil
+	end
+end
+
+return SlotTracker
