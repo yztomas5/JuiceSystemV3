@@ -15,6 +15,9 @@ local plotsFolder = Workspace:WaitForChild("Plots")
 -- Tabla para trackear qué jugador está en qué plot
 local plotOwners = {}  -- [plotName] = player
 
+-- Tabla para trackear si ya se cargó el Rebirth inicial desde la base de datos
+local hasLoadedInitialRebirth = {}  -- [userId] = true/false
+
 
 --------------------------------------------------------------
 -- LIMPIAR MODELOS ANTERIORES EN CURRENTREBIRTH
@@ -347,13 +350,26 @@ local function setupPlayerWatcher(player)
 	-- Escuchar cambios en CurrentPlot
 	currentPlotValue:GetPropertyChangedSignal("Value"):Connect(updatePlayer)
 
-	-- ⚡ Escuchar cambios en Rebirth - SOLO CAMBIA SI EXISTE MODELO EXACTO
+	-- ⚡ Escuchar cambios en Rebirth
+	-- PRIMER CAMBIO (carga de datos): Usar modelo más cercano
+	-- CAMBIOS POSTERIORES (rebirth real): Solo cambiar si existe modelo exacto
 	if rebirthValue and rebirthValue:IsA("IntValue") then
 		rebirthValue:GetPropertyChangedSignal("Value"):Connect(function()
 			local plotName = currentPlotValue.Value
 			if plotName ~= "" then
-				-- Usar la nueva función que solo cambia si existe modelo exacto
-				updatePlotBaseOnRebirthChange(plotName, player, rebirthValue.Value)
+				-- Verificar si es la primera carga de datos (inicial)
+				if not hasLoadedInitialRebirth[player.UserId] then
+					print("[PlotBaseManager] 🔄 PRIMERA CARGA DE REBIRTH detectada para", player.Name)
+					print("[PlotBaseManager] Rebirth cargado:", rebirthValue.Value)
+					hasLoadedInitialRebirth[player.UserId] = true
+
+					-- Primera carga: usar modelo MÁS CERCANO (aunque no sea exacto)
+					updatePlotBase(plotName, player)
+				else
+					-- Cambios posteriores: SOLO cambiar si existe modelo EXACTO
+					print("[PlotBaseManager] 🔄 CAMBIO DE REBIRTH detectado para", player.Name)
+					updatePlotBaseOnRebirthChange(plotName, player, rebirthValue.Value)
+				end
 			end
 		end)
 	end
@@ -402,6 +418,9 @@ local function onPlayerRemoving(player)
 			updatePlotBase(plotName, nil)  -- Poner NoPlayer
 		end
 	end
+
+	-- Limpiar flag de carga inicial
+	hasLoadedInitialRebirth[player.UserId] = nil
 end
 
 
