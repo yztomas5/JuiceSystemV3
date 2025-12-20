@@ -1,0 +1,197 @@
+local Workspace = game:GetService("Workspace")
+
+local ModelChangeDetector = {}
+
+local plotsFolder = Workspace:WaitForChild("Plots")
+
+function ModelChangeDetector.setupForJuices(player, slotTracker, onModelAdded, onModelRemoved)
+	local userId = player.UserId
+
+	local plotName = player:FindFirstChild("CurrentPlot")
+	if not plotName or not plotName:IsA("StringValue") then return end
+
+	local function connectToCurrentRebirth()
+		if plotName.Value == "" then return end
+
+		local plotModel = plotsFolder:FindFirstChild(plotName.Value)
+		if not plotModel then return end
+
+		local baseFolder = plotModel:FindFirstChild("Base")
+		if not baseFolder then return end
+
+		local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+		if not currentRebirthFolder then return end
+
+		local addedConnection = currentRebirthFolder.ChildAdded:Connect(function(child)
+			if child.Name ~= "Position" and child:IsA("Model") then
+				local currentModel = slotTracker.getCurrentModel(userId)
+				if child ~= currentModel then
+					slotTracker.setCurrentModel(userId, child)
+
+					if onModelAdded then
+						task.spawn(function()
+							if child.Parent then
+								onModelAdded(player, child)
+							else end
+						end)
+					end
+				end
+			end
+		end)
+		local removedConnection = currentRebirthFolder.ChildRemoved:Connect(function(child)
+			if not slotTracker.hasPlayerData(userId) then return end
+
+			local currentModel = slotTracker.getCurrentModel(userId)
+			if child == currentModel then
+				if onModelRemoved then
+					onModelRemoved(player)
+				end
+
+				slotTracker.setCurrentModel(userId, nil)
+			end
+		end)
+		slotTracker.addModelConnection(userId, addedConnection)
+		slotTracker.addModelConnection(userId, removedConnection)
+	end
+
+	connectToCurrentRebirth()
+
+	plotName:GetPropertyChangedSignal("Value"):Connect(function()
+		slotTracker.clearModelConnections(userId)
+
+		connectToCurrentRebirth()
+	end)
+end
+
+function ModelChangeDetector.setupForSlots(player, slotTracker, onModelChanged)
+	local userId = player.UserId
+
+	local plotName = player:FindFirstChild("CurrentPlot")
+	if not plotName or not plotName:IsA("StringValue") then return end
+
+	local function connectToCurrentRebirth()
+		if plotName.Value == "" then return end
+
+		local plotModel = plotsFolder:FindFirstChild(plotName.Value)
+		if not plotModel then return end
+
+		local baseFolder = plotModel:FindFirstChild("Base")
+		if not baseFolder then return end
+
+		local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+		if not currentRebirthFolder then return end
+
+		local addedConnection = currentRebirthFolder.ChildAdded:Connect(function(child)
+			if child.Name ~= "Position" and child:IsA("Model") then
+			
+				local currentModel = slotTracker.getCurrentModel(userId)
+				if child ~= currentModel then
+					slotTracker.setCurrentModel(userId, child)
+
+					if onModelChanged then
+						task.wait(0.5) 
+						onModelChanged(player)
+					end
+				end
+			end
+		end)
+
+		local removedConnection = currentRebirthFolder.ChildRemoved:Connect(function(child)
+			if not slotTracker.hasPlayerData(userId) then return end
+
+			local currentModel = slotTracker.getCurrentModel(userId)
+			if child == currentModel then
+			
+				slotTracker.cleanupPurchaseData(userId)
+				slotTracker.setCurrentModel(userId, nil)
+			end
+		end)
+
+		slotTracker.addModelConnection(userId, addedConnection)
+		slotTracker.addModelConnection(userId, removedConnection)
+	end
+
+	connectToCurrentRebirth()
+	plotName:GetPropertyChangedSignal("Value"):Connect(function()
+		slotTracker.clearModelConnections(userId)
+
+		connectToCurrentRebirth()
+	end)
+
+end
+
+function ModelChangeDetector.setup(player, onModelAdded, onModelRemoved, onPlotChanged)
+	local plotName = player:FindFirstChild("CurrentPlot")
+	if not plotName or not plotName:IsA("StringValue") then return end
+
+	local currentModel = nil
+	local connections = {}
+
+	local function cleanup()
+		for _, connection in ipairs(connections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		connections = {}
+	end
+
+	local function connectToCurrentRebirth()
+		cleanup()
+
+		if plotName.Value == "" then return end
+
+		local plotModel = plotsFolder:FindFirstChild(plotName.Value)
+		if not plotModel then return end
+
+		local baseFolder = plotModel:FindFirstChild("Base")
+		if not baseFolder then return end
+
+		local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+		if not currentRebirthFolder then return end
+
+		local addedConnection = currentRebirthFolder.ChildAdded:Connect(function(child)
+			if child.Name ~= "Position" and child:IsA("Model") then
+				if child ~= currentModel then
+				
+					currentModel = child
+
+					if onModelAdded then
+						onModelAdded(player, child)
+					end
+				end
+			end
+		end)
+
+		local removedConnection = currentRebirthFolder.ChildRemoved:Connect(function(child)
+			if child == currentModel then
+				if onModelRemoved then
+					onModelRemoved(player)
+				end
+
+				currentModel = nil
+			end
+		end)
+
+		table.insert(connections, addedConnection)
+		table.insert(connections, removedConnection)
+	end
+
+	connectToCurrentRebirth()
+
+	local plotConnection = plotName:GetPropertyChangedSignal("Value"):Connect(function()
+		connectToCurrentRebirth()
+
+		if onPlotChanged then
+			onPlotChanged(player)
+		end
+	end)
+
+	table.insert(connections, plotConnection)
+
+	return function()
+		cleanup()
+	end
+end
+
+return ModelChangeDetector
