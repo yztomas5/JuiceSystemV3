@@ -404,6 +404,15 @@ local function setupPlayerWatcher(player)
 	if currentPlotValue.Value ~= "" then
 		updatePlayer()
 	end
+
+	-- Fallback: Si el Rebirth no cambia (ej: jugador es Rebirth 0 real),
+	-- marcar el flag después de 3 segundos para que futuros rebirths usen modelo exacto
+	task.delay(3, function()
+		if not hasLoadedInitialRebirth[player.UserId] then
+			print("[PlotBaseManager] ⏱️ Timeout: Marcando carga inicial completa para", player.Name)
+			hasLoadedInitialRebirth[player.UserId] = true
+		end
+	end)
 end
 
 
