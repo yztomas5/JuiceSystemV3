@@ -1,0 +1,205 @@
+-- ServerScript: PlayerPlacedJuicesDataStore.lua
+-- Guarda y carga PlacedJuices con soporte COMPLETO para:
+-- Folder, StringValue, IntValue, NumberValue, BoolValue (recursivo infinito)
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- ProfileStore framework
+local ProfileStore = require(ReplicatedStorage.Modules.Data.ProfileStore)
+
+---------------------------------------------------------------------
+-- TEMPLATE
+---------------------------------------------------------------------
+local PROFILE_TEMPLATE = {
+	PlacedJuices = {}
+}
+
+local PlayerPlacedJuicesStore = ProfileStore.New("PlayerPlacedJuices", PROFILE_TEMPLATE)
+local Profiles = {}
+
+---------------------------------------------------------------------
+-- SERIALIZACIÓN RECURSIVA INFINITA
+---------------------------------------------------------------------
+local function serializeFolder(folder)
+	local data = {
+		Name = folder.Name,
+		Values = {},
+		Children = {}
+	}
+
+	for _, child in ipairs(folder:GetChildren()) do
+
+		-- ValueInstances (StringValue, IntValue, NumberValue, BoolValue...)
+		if child:IsA("ValueBase") then
+			table.insert(data.Values, {
+				Name = child.Name,
+				Type = child.ClassName,
+				Value = child.Value
+			})
+
+			-- Carpetas (sin límite de profundidad)
+		elseif child:IsA("Folder") then
+			table.insert(data.Children, serializeFolder(child))
+		end
+	end
+
+	return data
+end
+
+
+local function serializePlacedJuices(placedJuicesFolder)
+	local data = {}
+	for _, juiceFolder in ipairs(placedJuicesFolder:GetChildren()) do
+		if juiceFolder:IsA("Folder") then
+			table.insert(data, serializeFolder(juiceFolder))
+		end
+	end
+	return data
+end
+
+
+---------------------------------------------------------------------
+-- DESERIALIZACIÓN RECURSIVA INFINITA
+---------------------------------------------------------------------
+local function deserializeFolder(data, parent)
+	local newFolder = Instance.new("Folder")
+	newFolder.Name = data.Name
+	newFolder.Parent = parent
+
+	-- Restaurar todos los ValueBase
+	for _, v in ipairs(data.Values or {}) do
+		local newValue = Instance.new(v.Type)
+		newValue.Name = v.Name
+		newValue.Value = v.Value
+		newValue.Parent = newFolder
+	end
+
+	-- Restaurar subcarpetas
+	for _, childData in ipairs(data.Children or {}) do
+		deserializeFolder(childData, newFolder)
+	end
+
+	return newFolder
+end
+
+
+local function deserializePlacedJuices(data, parentFolder)
+	-- Limpiar antes de reconstruir
+	for _, old in ipairs(parentFolder:GetChildren()) do
+		old:Destroy()
+	end
+
+	for _, juiceData in ipairs(data) do
+		deserializeFolder(juiceData, parentFolder)
+	end
+end
+
+
+---------------------------------------------------------------------
+-- ACTUALIZAR DATOS EN PROFILE
+---------------------------------------------------------------------
+local function updatePlacedJuicesInProfile(player)
+	local profile = Profiles[player]
+	if not profile then return end
+
+	local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+	if not placedJuicesFolder then
+		profile.Data.PlacedJuices = {}
+		return
+	end
+
+	profile.Data.PlacedJuices = serializePlacedJuices(placedJuicesFolder)
+end
+
+
+---------------------------------------------------------------------
+-- CARGAR PlacedJuices AL ENTRAR
+---------------------------------------------------------------------
+local function loadPlacedJuicesFromProfile(player, profile)
+	local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+	if not placedJuicesFolder then
+		placedJuicesFolder = Instance.new("Folder")
+		placedJuicesFolder.Name = "PlacedJuices"
+		placedJuicesFolder.Parent = player
+	end
+
+	if profile.Data.PlacedJuices and #profile.Data.PlacedJuices > 0 then
+		deserializePlacedJuices(profile.Data.PlacedJuices, placedJuicesFolder)
+	end
+end
+
+
+---------------------------------------------------------------------
+-- PLAYER ADDED
+---------------------------------------------------------------------
+local function PlayerAdded(player)
+	local profile = PlayerPlacedJuicesStore:StartSessionAsync(tostring(player.UserId), {
+		Cancel = function()
+			return player.Parent ~= Players
+		end,
+	})
+
+	if profile ~= nil then
+		profile:AddUserId(player.UserId)
+		profile:Reconcile()
+
+		profile.OnSessionEnd:Connect(function()
+			Profiles[player] = nil
+			player:Kick("Profile session end - Please rejoin")
+		end)
+
+		if player.Parent == Players then
+			Profiles[player] = profile
+
+			print("✅ PLACED JUICES cargado para " .. player.Name)
+
+			loadPlacedJuicesFromProfile(player, profile)
+
+			local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+			if placedJuicesFolder then
+
+				placedJuicesFolder.ChildAdded:Connect(function()
+					updatePlacedJuicesInProfile(player)
+				end)
+				placedJuicesFolder.ChildRemoved:Connect(function()
+					updatePlacedJuicesInProfile(player)
+				end)
+				placedJuicesFolder.DescendantAdded:Connect(function()
+					updatePlacedJuicesInProfile(player)
+				end)
+				placedJuicesFolder.DescendantRemoving:Connect(function()
+					updatePlacedJuicesInProfile(player)
+				end)
+			end
+
+		else
+			profile:EndSession()
+		end
+
+	else
+		player:Kick("Profile load fail - Please rejoin")
+	end
+end
+
+
+---------------------------------------------------------------------
+-- PLAYER REMOVING
+---------------------------------------------------------------------
+Players.PlayerRemoving:Connect(function(player)
+	local profile = Profiles[player]
+	if profile ~= nil then
+		updatePlacedJuicesInProfile(player)
+		profile:EndSession()
+	end
+end)
+
+
+---------------------------------------------------------------------
+-- PARA SERVIDOR YA INICIADO
+---------------------------------------------------------------------
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(PlayerAdded, player)
+end
+
+Players.PlayerAdded:Connect(PlayerAdded)
