@@ -1,0 +1,410 @@
+--// ServerScript - PlotBaseManager
+--// Maneja la visualización de bases según Rebirth y la gestión de plots
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+-- Referencias a las carpetas de assets
+local baseFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Models"):WaitForChild("Plot"):WaitForChild("Base")
+local noPlayerModel = baseFolder:WaitForChild("NoPlayer")
+
+-- Referencia a las plots en Workspace
+local plotsFolder = Workspace:WaitForChild("Plots")
+
+-- Tabla para trackear qué jugador está en qué plot
+local plotOwners = {}  -- [plotName] = player
+
+
+--------------------------------------------------------------
+-- LIMPIAR MODELOS ANTERIORES EN CURRENTREBIRTH
+--------------------------------------------------------------
+local function clearCurrentRebirth(plotModel)
+	if not plotModel then return end
+
+	local baseFolder = plotModel:FindFirstChild("Base")
+	if not baseFolder then return end
+
+	local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+	if not currentRebirthFolder then return end
+
+	-- Eliminar TODOS los modelos excepto Position
+	for _, child in ipairs(currentRebirthFolder:GetChildren()) do
+		if child.Name ~= "Position" and child ~= currentRebirthFolder:FindFirstChild("Position") then
+			child:Destroy()
+		end
+	end
+end
+
+
+--------------------------------------------------------------
+-- ENCONTRAR EL MODELO DE REBIRTH MÁS CERCANO (PARA CARGA INICIAL)
+--------------------------------------------------------------
+local function findClosestRebirthModel(rebirthValue)
+	local closestModel = nil
+	local closestRebirth = -1
+
+	-- Buscar todos los modelos numéricos en Base
+	for _, model in ipairs(baseFolder:GetChildren()) do
+		local modelRebirth = tonumber(model.Name)
+
+		if modelRebirth then
+			-- Si el modelo es exacto, retornarlo inmediatamente
+			if modelRebirth == rebirthValue then
+				return model
+			end
+
+			-- Si es menor o igual al rebirth del jugador y es el más alto encontrado
+			if modelRebirth <= rebirthValue and modelRebirth > closestRebirth then
+				closestRebirth = modelRebirth
+				closestModel = model
+			end
+		end
+	end
+
+	-- Si no se encontró ninguno, buscar el modelo "0"
+	if not closestModel then
+		closestModel = baseFolder:FindFirstChild("0")
+	end
+
+	return closestModel
+end
+
+
+--------------------------------------------------------------
+-- ⚡ BUSCAR MODELO EXACTO PARA UN REBIRTH ESPECÍFICO
+-- Solo retorna modelo si existe con el número EXACTO
+--------------------------------------------------------------
+local function findExactRebirthModel(rebirthValue)
+	local modelName = tostring(rebirthValue)
+	local exactModel = baseFolder:FindFirstChild(modelName)
+
+	if exactModel then
+		print("[PlotBaseManager] ✅ Modelo exacto encontrado para Rebirth " .. rebirthValue)
+		return exactModel
+	else
+		print("[PlotBaseManager] ℹ️ No hay modelo específico para Rebirth " .. rebirthValue .. ", manteniendo modelo actual")
+		return nil
+	end
+end
+
+
+--------------------------------------------------------------
+-- CAMBIAR TRANSPARENCIA, COLISIÓN Y CANTOUCH DE UN MODELO
+-- EXCEPTO LA PARTE "Collect" Y LAS TOOLS
+--------------------------------------------------------------
+local function setModelVisibility(model, isVisible)
+	if not model then return end
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			-- EXCEPCIÓN 1: No tocar la parte "Collect"
+			if descendant.Name == "Collect" then
+				continue
+			end
+
+			-- EXCEPCIÓN 2: No tocar partes que sean hijos de una Tool
+			local isInsideTool = false
+			local parent = descendant.Parent
+			while parent do
+				if parent:IsA("Tool") then
+					isInsideTool = true
+					break
+				end
+				parent = parent.Parent
+			end
+
+			if isInsideTool then
+				continue
+			end
+
+			-- Aplicar cambios
+			if isVisible then
+				descendant.Transparency = 0
+				descendant.CanCollide = true
+				descendant.CanTouch = true
+			else
+				descendant.Transparency = 1
+				descendant.CanCollide = false
+				descendant.CanTouch = false
+			end
+		end
+	end
+end
+
+
+--------------------------------------------------------------
+-- ACTUALIZAR VISIBILIDAD DE SLOTS (SIN BILLBOARDS)
+--------------------------------------------------------------
+local function updateSlotsVisibility(clonedModel, slotsValue)
+	if not clonedModel then return end
+
+	local slotsFolder = clonedModel:FindFirstChild("Slots")
+	if not slotsFolder then return end
+
+	-- Actualizar Buy (solo visible el SIGUIENTE slot)
+	local buyFolder = slotsFolder:FindFirstChild("Buy")
+	if buyFolder then
+		for _, child in ipairs(buyFolder:GetChildren()) do
+			local slotNumber = tonumber(child.Name)
+			if slotNumber then
+				local shouldBeVisible = slotNumber == slotsValue + 1
+				setModelVisibility(child, shouldBeVisible)
+			end
+		end
+	end
+
+	-- Actualizar Place (visible desde 1 hasta slotsValue)
+	local placeFolder = slotsFolder:FindFirstChild("Place")
+	if placeFolder then
+		for _, child in ipairs(placeFolder:GetChildren()) do
+			local slotNumber = tonumber(child.Name)
+			if slotNumber then
+				setModelVisibility(child, slotNumber <= slotsValue)
+			end
+		end
+	end
+end
+
+
+--------------------------------------------------------------
+-- CLONAR Y POSICIONAR UN MODELO EN CURRENTREBIRTH
+--------------------------------------------------------------
+
+local function cloneAndPositionBase(template, plotModel, player, plotName)
+	if not template or not plotModel then return end
+
+	local baseFolder = plotModel:FindFirstChild("Base")
+	if not baseFolder then return end
+
+	local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+	if not currentRebirthFolder then return end
+
+	local positionPart = currentRebirthFolder:FindFirstChild("Position")
+	if not positionPart then return end
+
+	-- CRÍTICO: Limpiar PRIMERO todos los modelos anteriores
+	clearCurrentRebirth(plotModel)
+
+	-- Clonar el template
+	local clone = template:Clone()
+
+	-- Guardar la posición y orientación target
+	local targetCFrame = positionPart.CFrame
+
+	-- CAMBIAR POSICIÓN Y ORIENTACIÓN
+	if clone:IsA("Model") then
+		-- Aplicar el CFrame completo (posición + orientación) de la parte Position
+		clone:PivotTo(targetCFrame)
+
+	elseif clone:IsA("BasePart") then
+		-- Para partes simples, aplicar el CFrame completo
+		clone.CFrame = targetCFrame
+	end
+
+	-- Parentear el modelo clonado DESPUÉS de posicionarlo
+	clone.Parent = currentRebirthFolder
+
+	-- Actualizar visibilidad de slots si hay jugador
+	if player then
+		local dataFolder = player:FindFirstChild("Data")
+		if dataFolder then
+			local slotsValue = dataFolder:FindFirstChild("Slots")
+			if slotsValue and slotsValue:IsA("IntValue") then
+				updateSlotsVisibility(clone, slotsValue.Value)
+			end
+		end
+	end
+
+	return clone
+end
+
+
+--------------------------------------------------------------
+-- ACTUALIZAR BASE DE UNA PLOT (CARGA INICIAL)
+--------------------------------------------------------------
+local function updatePlotBase(plotName, player)
+	if not plotName or plotName == "" then return end
+
+	local plotModel = plotsFolder:FindFirstChild(plotName)
+	if not plotModel then return end
+
+	-- Si no hay jugador, poner NoPlayer
+	if not player then
+		cloneAndPositionBase(noPlayerModel, plotModel, nil, plotName)
+		return
+	end
+
+	-- Obtener el Rebirth del jugador
+	local dataFolder = player:FindFirstChild("Data")
+	if not dataFolder then
+		cloneAndPositionBase(noPlayerModel, plotModel, nil, plotName)
+		return
+	end
+
+	local rebirthValue = dataFolder:FindFirstChild("Rebirth")
+	if not rebirthValue or not rebirthValue:IsA("IntValue") then
+		cloneAndPositionBase(noPlayerModel, plotModel, nil, plotName)
+		return
+	end
+
+	-- Encontrar el modelo correspondiente al Rebirth (busca el más cercano)
+	local rebirthModel = findClosestRebirthModel(rebirthValue.Value)
+
+	if rebirthModel then
+		cloneAndPositionBase(rebirthModel, plotModel, player, plotName)
+	else
+		cloneAndPositionBase(noPlayerModel, plotModel, nil, plotName)
+	end
+end
+
+
+--------------------------------------------------------------
+-- ⚡ ACTUALIZAR BASE SOLO SI EXISTE MODELO EXACTO (REBIRTH CHANGE)
+--------------------------------------------------------------
+local function updatePlotBaseOnRebirthChange(plotName, player, newRebirthValue)
+	if not plotName or plotName == "" then return end
+	if not player then return end
+
+	local plotModel = plotsFolder:FindFirstChild(plotName)
+	if not plotModel then return end
+
+	-- ⚡ BUSCAR MODELO EXACTO
+	local exactModel = findExactRebirthModel(newRebirthValue)
+
+	-- Solo cambiar si existe modelo exacto
+	if exactModel then
+		print("[PlotBaseManager] 🔄 Cambiando a modelo de Rebirth " .. newRebirthValue)
+		cloneAndPositionBase(exactModel, plotModel, player, plotName)
+	else
+		print("[PlotBaseManager] ⏸️ No hay cambio de modelo para Rebirth " .. newRebirthValue)
+		-- NO hacer nada - mantener el modelo actual
+	end
+end
+
+
+--------------------------------------------------------------
+-- OBTENER JUGADOR DUEÑO DE UNA PLOT (FUNCIÓN PÚBLICA)
+--------------------------------------------------------------
+function getPlotOwner(plotName)
+	return plotOwners[plotName]
+end
+
+
+--------------------------------------------------------------
+-- CONFIGURAR VIGILANCIA PARA UN JUGADOR
+--------------------------------------------------------------
+local function setupPlayerWatcher(player)
+	-- Esperar CurrentPlot
+	local currentPlotValue = player:WaitForChild("CurrentPlot", 10)
+	if not currentPlotValue or not currentPlotValue:IsA("StringValue") then return end
+
+	-- Esperar Data y Rebirth
+	local dataFolder = player:WaitForChild("Data", 10)
+	local rebirthValue
+	local slotsValue
+
+	if dataFolder then
+		rebirthValue = dataFolder:WaitForChild("Rebirth", 10)
+		slotsValue = dataFolder:WaitForChild("Slots", 10)
+	end
+
+	-- Función para actualizar cuando cambia la plot
+	local function updatePlayer()
+		local plotName = currentPlotValue.Value
+
+		-- Limpiar plot anterior si existe
+		for oldPlotName, oldPlayer in pairs(plotOwners) do
+			if oldPlayer == player and oldPlotName ~= plotName then
+				plotOwners[oldPlotName] = nil
+				updatePlotBase(oldPlotName, nil)  -- Poner NoPlayer en la plot anterior
+			end
+		end
+
+		-- Actualizar nueva plot
+		if plotName ~= "" then
+			plotOwners[plotName] = player
+			updatePlotBase(plotName, player)  -- Usa findClosest para carga inicial
+		end
+	end
+
+	-- Escuchar cambios en CurrentPlot
+	currentPlotValue:GetPropertyChangedSignal("Value"):Connect(updatePlayer)
+
+	-- ⚡ Escuchar cambios en Rebirth - SOLO CAMBIA SI EXISTE MODELO EXACTO
+	if rebirthValue and rebirthValue:IsA("IntValue") then
+		rebirthValue:GetPropertyChangedSignal("Value"):Connect(function()
+			local plotName = currentPlotValue.Value
+			if plotName ~= "" then
+				-- Usar la nueva función que solo cambia si existe modelo exacto
+				updatePlotBaseOnRebirthChange(plotName, player, rebirthValue.Value)
+			end
+		end)
+	end
+
+	-- Escuchar cambios en Slots (solo actualiza visibilidad)
+	if slotsValue and slotsValue:IsA("IntValue") then
+		slotsValue:GetPropertyChangedSignal("Value"):Connect(function()
+			local plotName = currentPlotValue.Value
+			if plotName ~= "" then
+				-- Buscar el modelo clonado actual
+				local plotModel = plotsFolder:FindFirstChild(plotName)
+				if plotModel then
+					local baseFolder = plotModel:FindFirstChild("Base")
+					if baseFolder then
+						local currentRebirthFolder = baseFolder:FindFirstChild("CurrentRebirth")
+						if currentRebirthFolder then
+							-- Buscar el modelo clonado (no Position)
+							for _, child in ipairs(currentRebirthFolder:GetChildren()) do
+								if child.Name ~= "Position" and child:IsA("Model") then
+									updateSlotsVisibility(child, slotsValue.Value)
+									break
+								end
+							end
+						end
+					end
+				end
+			end
+		end)
+	end
+
+	-- Actualizar inmediatamente si ya tiene una plot asignada
+	if currentPlotValue.Value ~= "" then
+		updatePlayer()
+	end
+end
+
+
+--------------------------------------------------------------
+-- LIMPIAR CUANDO UN JUGADOR SE VA
+--------------------------------------------------------------
+local function onPlayerRemoving(player)
+	-- Limpiar plots del jugador
+	for plotName, owner in pairs(plotOwners) do
+		if owner == player then
+			plotOwners[plotName] = nil
+			updatePlotBase(plotName, nil)  -- Poner NoPlayer
+		end
+	end
+end
+
+
+--------------------------------------------------------------
+-- INICIALIZACIÓN
+--------------------------------------------------------------
+Players.PlayerAdded:Connect(setupPlayerWatcher)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+-- Configurar jugadores que ya están en el servidor
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(function()
+		setupPlayerWatcher(player)
+	end)
+end
+
+
+--------------------------------------------------------------
+-- EXPONER FUNCIÓN GLOBAL PARA OTROS SCRIPTS
+--------------------------------------------------------------
+_G.GetPlotOwner = getPlotOwner
+
+print("[PlotBaseManager] ✅ Sistema de gestión de plots iniciado")
