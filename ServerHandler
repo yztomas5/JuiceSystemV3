@@ -614,58 +614,40 @@ local function setupPlacedJuicesWatcher(player)
 		initializePlacedJuices(player)
 	end)
 
-	-- SISTEMA DE MONITOREO CONTINUO DEL MODELO (NO DEPENDE DE EVENTOS)
-	-- Este sistema verifica cada segundo si el modelo cambió y recrea jugos automáticamente
-	local lastKnownModel = JuiceSystemUtils.findClonedModel(player)
-	SlotTracker.setCurrentModel(userId, lastKnownModel)
+	-- SISTEMA DE DETECCIÓN DE CAMBIO DE MODELO CON EVENTOS
+	-- Este sistema usa eventos (ChildAdded/ChildRemoved) en lugar de polling
+	-- Detecta cuando un modelo se agrega o elimina de CurrentRebirth
+	local initialModel = JuiceSystemUtils.findClonedModel(player)
+	SlotTracker.setCurrentModel(userId, initialModel)
 
-	local modelMonitorConnection = RunService.Heartbeat:Connect(function()
-		-- Solo verificar cada segundo
-		local currentTime = os.time()
-		local lastCheck = SlotTracker.getPlayerData(userId) and SlotTracker.getPlayerData(userId).lastModelCheck or 0
+	ModelChangeDetector.setupForJuices(
+		player,
+		SlotTracker,
+		-- Callback cuando se agrega un nuevo modelo
+		function(player, newModel)
+			print("[PlacedJuices] ⚠️ CAMBIO DE MODELO DETECTADO (Event)")
+			print("[PlacedJuices] Jugador:", player.Name)
+			print("[PlacedJuices] Modelo nuevo:", newModel.Name)
 
-		if currentTime <= lastCheck then
-			return
-		end
+			-- Recrear jugos para el nuevo modelo
+			task.spawn(function()
+				recreateAllJuicesForNewModel(player, newModel)
+			end)
+		end,
+		-- Callback cuando se elimina el modelo actual
+		function(player)
+			print("[PlacedJuices] ⚠️ MODELO ELIMINADO (Event)")
+			print("[PlacedJuices] Jugador:", player.Name)
+			print("[PlacedJuices] Limpiando jugos...")
 
-		-- Actualizar último check
-		if SlotTracker.hasPlayerData(userId) then
-			local playerData = SlotTracker.getPlayerData(userId)
-			if playerData then
-				playerData.lastModelCheck = currentTime
-			end
-		end
-
-		-- Obtener modelo actual
-		local currentModel = JuiceSystemUtils.findClonedModel(player)
-		local previousModel = SlotTracker.getCurrentModel(userId)
-
-		-- Si el modelo cambió, recrear jugos
-		if currentModel ~= previousModel then
-			print("[PlacedJuices] ⚠️ CAMBIO DE MODELO DETECTADO (Polling)")
-			print("[PlacedJuices] Modelo anterior:", previousModel and previousModel.Name or "nil")
-			print("[PlacedJuices] Modelo nuevo:", currentModel and currentModel.Name or "nil")
-
-			-- Actualizar referencia
-			SlotTracker.setCurrentModel(userId, currentModel)
-
-			-- Si hay un nuevo modelo, recrear jugos
-			if currentModel and currentModel.Parent then
-				task.spawn(function()
-					recreateAllJuicesForNewModel(player, currentModel)
-				end)
-			else
-				-- Si no hay modelo, limpiar todo
-				print("[PlacedJuices] No hay modelo, limpiando jugos")
+			local userId = player.UserId
+			if SlotTracker.hasPlayerData(userId) then
 				SlotTracker.cleanupAllSlotsWithDestruction(userId)
 				SlotTracker.clearCollectZoneConnection(userId)
 				SlotTracker.clearCollectZoneGuiConnection(userId)
 			end
 		end
-	end)
-
-	-- Guardar conexión de monitoreo
-	SlotTracker.setModelMonitorConnection(userId, modelMonitorConnection)
+	)
 
 	-- Cuando se añade un juice
 	placedJuices.ChildAdded:Connect(function(child)
