@@ -6,7 +6,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 -- Referencias a las carpetas de assets
-local baseFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Models"):WaitForChild("Plot"):WaitForChild("Base")
+-- ⚡ CORREGIDO: Buscar en la ruta correcta (sin "Plot" en el medio)
+local baseFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Models"):WaitForChild("Base")
 local noPlayerModel = baseFolder:WaitForChild("NoPlayer")
 
 -- Referencia a las plots en Workspace
