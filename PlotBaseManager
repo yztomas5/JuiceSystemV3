@@ -6,8 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 -- Referencias a las carpetas de assets
--- ⚡ CORREGIDO: Buscar en la ruta correcta (sin "Plot" en el medio)
-local baseFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Models"):WaitForChild("Base")
+local baseFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Models"):WaitForChild("Plot"):WaitForChild("Base")
 local noPlayerModel = baseFolder:WaitForChild("NoPlayer")
 
 -- Referencia a las plots en Workspace
@@ -45,27 +44,42 @@ local function findClosestRebirthModel(rebirthValue)
 	local closestModel = nil
 	local closestRebirth = -1
 
+	print("[PlotBaseManager] 🔍 Buscando modelo más cercano para Rebirth:", rebirthValue)
+	print("[PlotBaseManager] 📁 Modelos disponibles en baseFolder:")
+	for _, child in ipairs(baseFolder:GetChildren()) do
+		print("  - " .. child.Name .. " (tonumber: " .. tostring(tonumber(child.Name)) .. ")")
+	end
+
 	-- Buscar todos los modelos numéricos en Base
 	for _, model in ipairs(baseFolder:GetChildren()) do
 		local modelRebirth = tonumber(model.Name)
 
 		if modelRebirth then
+			print("[PlotBaseManager] 🔢 Evaluando modelo:", model.Name, "| Valor:", modelRebirth)
+
 			-- Si el modelo es exacto, retornarlo inmediatamente
 			if modelRebirth == rebirthValue then
+				print("[PlotBaseManager] ✅ MATCH EXACTO encontrado:", model.Name)
 				return model
 			end
 
 			-- Si es menor o igual al rebirth del jugador y es el más alto encontrado
 			if modelRebirth <= rebirthValue and modelRebirth > closestRebirth then
+				print("[PlotBaseManager] ⬆️ Nuevo modelo más cercano:", model.Name, "| closestRebirth:", closestRebirth, "→", modelRebirth)
 				closestRebirth = modelRebirth
 				closestModel = model
+			else
+				print("[PlotBaseManager] ⏭️ Modelo descartado:", model.Name, "| Razón: modelRebirth > rebirthValue O modelRebirth <= closestRebirth")
 			end
 		end
 	end
 
 	-- Si no se encontró ninguno, buscar el modelo "0"
 	if not closestModel then
+		print("[PlotBaseManager] ⚠️ No se encontró ningún modelo válido, usando modelo 0")
 		closestModel = baseFolder:FindFirstChild("0")
+	else
+		print("[PlotBaseManager] ✅ Modelo final seleccionado:", closestModel.Name, "para Rebirth", rebirthValue)
 	end
 
 	return closestModel
@@ -78,6 +92,8 @@ end
 --------------------------------------------------------------
 local function findExactRebirthModel(rebirthValue)
 	local modelName = tostring(rebirthValue)
+	print("[PlotBaseManager] 🔍 Buscando modelo EXACTO para Rebirth:", rebirthValue, "| Nombre buscado:", modelName)
+
 	local exactModel = baseFolder:FindFirstChild(modelName)
 
 	if exactModel then
