@@ -96,6 +96,9 @@ local function checkIfModelExists(rebirthNumber)
 	modelsBase = modelsBase:FindFirstChild("Models")
 	if not modelsBase then return false end
 
+	modelsBase = modelsBase:FindFirstChild("Plot")
+	if not modelsBase then return false end
+
 	modelsBase = modelsBase:FindFirstChild("Base")
 	if not modelsBase then return false end
 
