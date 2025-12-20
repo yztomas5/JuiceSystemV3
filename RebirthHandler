@@ -1,0 +1,215 @@
+-- ServerScriptService/RebirthHandler.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+-- Módulos
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Config"):WaitForChild("RebirthConfig"))
+
+-- Remote Events
+local rebirthRequest = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Rebirth"):WaitForChild("Request")
+local warningEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Warn"):WaitForChild("Warning")
+
+-- ⚡ BindableEvent para notificar al sistema de jugos
+local reloadJuicesEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Rebirth"):WaitForChild("ReloadJuices")
+
+-- Tabla para rastrear qué parcela tiene cada jugador (importada de tu otro script)
+local playerParcelas = {}
+
+-- Función para obtener la parcela del jugador
+local function getPlayerParcela(player)
+	return playerParcelas[player.UserId]
+end
+
+-- Función para teletransportar al jugador a su plot
+local function teleportToPlayerPlot(player)
+	local character = player.Character
+	if not character then return false end
+
+	local parcela = getPlayerParcela(player)
+	if not parcela then
+		-- Buscar usando CurrentPlot
+		local currentPlot = player:FindFirstChild("CurrentPlot")
+		if currentPlot and currentPlot:IsA("StringValue") then
+			local plotsFolder = Workspace:FindFirstChild("Plots")
+			if plotsFolder then
+				parcela = plotsFolder:FindFirstChild(currentPlot.Value)
+			end
+		end
+	end
+
+	if not parcela then return false end
+
+	local spawn = parcela:FindFirstChild("Spawn")
+	if not spawn then return false end
+
+	local tpPart = spawn:FindFirstChild("Tp")
+	if not tpPart then return false end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return false end
+
+	hrp.CFrame = tpPart.CFrame + Vector3.new(0, 3, 0)
+	return true
+end
+
+-- Función para verificar si el jugador tiene un ingrediente
+local function hasIngredient(player, ingredientName)
+	local inventory = player:FindFirstChild("Inventory")
+	if not inventory then return false end
+
+	local ingredientsFolder = inventory:FindFirstChild("Ingredients")
+	if not ingredientsFolder then return false end
+
+	return ingredientsFolder:FindFirstChild(ingredientName) ~= nil
+end
+
+-- Función para dar recompensas de items
+local function giveRewards(player, rewards)
+	local inventory = player:FindFirstChild("Inventory")
+	if not inventory then return false end
+
+	local gearsFolder = inventory:FindFirstChild("Gears")
+	if not gearsFolder then return false end
+
+	-- Recorrer todas las categorías de recompensas
+	for categoryName, rewardList in pairs(rewards) do
+		-- Solo procesar la categoría "Items"
+		if categoryName == "Items" then
+			for _, reward in ipairs(rewardList) do
+				-- Crear un Folder con el nombre del item
+				local itemFolder = Instance.new("Folder")
+				itemFolder.Name = reward.Name
+				itemFolder.Parent = gearsFolder
+			end
+		end
+	end
+
+	return true
+end
+
+-- ⚡ Función para verificar si existe modelo para el rebirth
+local function checkIfModelExists(rebirthNumber)
+	local modelsBase = ReplicatedStorage:FindFirstChild("Assets")
+	if not modelsBase then return false end
+
+	modelsBase = modelsBase:FindFirstChild("Models")
+	if not modelsBase then return false end
+
+	modelsBase = modelsBase:FindFirstChild("Base")
+	if not modelsBase then return false end
+
+	-- Buscar modelo con el número del rebirth
+	local modelForRebirth = modelsBase:FindFirstChild(tostring(rebirthNumber))
+	return modelForRebirth ~= nil
+end
+
+-- Función principal para manejar el rebirth
+local function handleRebirth(player)
+	-- Verificar que el jugador tenga Data
+	local playerData = player:FindFirstChild("Data")
+	if not playerData then
+		warningEvent:FireClient(player, "Error: Player data not found", Color3.fromRGB(255, 0, 0))
+		return
+	end
+
+	local rebirthValue = playerData:FindFirstChild("Rebirth")
+	local moneyValue = playerData:FindFirstChild("Money")
+
+	if not rebirthValue or not moneyValue then
+		warningEvent:FireClient(player, "Error: Data values not found", Color3.fromRGB(255, 0, 0))
+		return
+	end
+
+	-- Obtener el siguiente nivel de rebirth
+	local currentRebirth = rebirthValue.Value
+	local nextRebirth = currentRebirth + 1
+	local rebirthData = RebirthConfig[nextRebirth]
+
+	-- Verificar si existe el siguiente nivel
+	if not rebirthData then
+		warningEvent:FireClient(player, "Max Rebirth reached!", Color3.fromRGB(255, 255, 0))
+		return
+	end
+
+	-- Verificar requisito de dinero
+	local requiredMoney = rebirthData.Requirements.Cost
+	if moneyValue.Value < requiredMoney then
+		warningEvent:FireClient(player, "Not enough money!", Color3.fromRGB(255, 0, 0))
+		return
+	end
+
+	-- Verificar requisitos de ingredientes
+	local requiredIngredients = rebirthData.Requirements.Ingredients
+	for _, ingredientName in ipairs(requiredIngredients) do
+		if not hasIngredient(player, ingredientName) then
+			warningEvent:FireClient(player, "Missing ingredient: " .. ingredientName, Color3.fromRGB(255, 0, 0))
+			return
+		end
+	end
+
+	-- ✅ Todos los requisitos cumplidos, proceder con el rebirth
+
+	-- 1. Aumentar el nivel de Rebirth
+	rebirthValue.Value = nextRebirth
+
+	-- 2. Resetear el dinero a 1500
+	moneyValue.Value = 1500
+
+	-- 3. Aumentar multiplicadores
+	local moneyMultiplier = playerData:FindFirstChild("MoneyMultiplier")
+	local luckMultiplier = playerData:FindFirstChild("LuckMultiplier")
+
+	if moneyMultiplier then
+		moneyMultiplier.Value = moneyMultiplier.Value + 1
+	end
+
+	if luckMultiplier then
+		luckMultiplier.Value = luckMultiplier.Value + 1
+	end
+
+	-- 4. Dar recompensas (items)
+	if not giveRewards(player, rebirthData.Rewards) then
+		warningEvent:FireClient(player, "Error giving rewards", Color3.fromRGB(255, 0, 0))
+		return
+	end
+
+	-- 5. Teletransportar al jugador a su plot
+	task.wait(0.1) -- Pequeña espera para asegurar que todo se actualizó
+	if not teleportToPlayerPlot(player) then
+		warn("Could not teleport player " .. player.Name .. " to their plot after rebirth")
+	end
+
+	-- ⚡ 6. VERIFICAR SI EXISTE MODELO PARA ESTE REBIRTH
+	local modelExists = checkIfModelExists(nextRebirth)
+
+	if modelExists then
+		print("[RebirthHandler] ✅ Modelo encontrado para Rebirth " .. nextRebirth)
+		print("[RebirthHandler] 🔄 Notificando al sistema de jugos para recargar...")
+
+		-- Disparar el BindableEvent para que el sistema de jugos recargue
+		reloadJuicesEvent:Fire(player)
+
+		print("[RebirthHandler] ✅ Señal de recarga enviada al sistema de jugos")
+	else
+		print("[RebirthHandler] ℹ️ No hay cambio de modelo para Rebirth " .. nextRebirth)
+	end
+
+	-- 7. Notificar éxito
+	warningEvent:FireClient(player, "Rebirth " .. nextRebirth .. " completed!", Color3.fromRGB(255, 255, 0))
+end
+
+-- Conectar el evento remoto
+rebirthRequest.OnServerEvent:Connect(handleRebirth)
+
+-- Sincronizar la tabla de parcelas con el otro script
+-- (Esto es opcional si ya tienes un sistema centralizado)
+local function syncParcelasTable()
+	-- Este es un placeholder para sincronizar con tu sistema de parcelas
+	-- Puedes usar un ModuleScript compartido o BindableEvents
+	-- Por ahora, la función getPlayerParcela busca usando CurrentPlot
+end
+
+syncParcelasTable()
+
+print("[RebirthHandler] ✅ Sistema de Rebirth iniciado")

@@ -574,40 +574,47 @@ local function setupPlacedJuicesWatcher(player)
 		initializePlacedJuices(player)
 	end)
 
-	-- SISTEMA DE DETECCIÓN DE CAMBIO DE MODELO CON EVENTOS
-	-- Este sistema usa eventos (ChildAdded/ChildRemoved) en lugar de polling
-	-- Detecta cuando un modelo se agrega o elimina de CurrentRebirth
+	-- ⚡ SISTEMA CONTROLADO POR REBIRTH
+	-- El sistema YA NO detecta cambios de modelo automáticamente
+	-- En su lugar, escucha la señal del RebirthHandler cuando el modelo cambia
 	local initialModel = JuiceSystemUtils.findClonedModel(player)
 	SlotTracker.setCurrentModel(userId, initialModel)
 
-	ModelChangeDetector.setupForJuices(
-		player,
-		SlotTracker,
-		-- Callback cuando se agrega un nuevo modelo
-		function(player, newModel)
-			print("[PlacedJuices] ⚠️ CAMBIO DE MODELO DETECTADO (Event)")
-			print("[PlacedJuices] Jugador:", player.Name)
-			print("[PlacedJuices] Modelo nuevo:", newModel.Name)
+	-- ⚡ LISTENER PARA RECARGA DESDE REBIRTH
+	-- Se activa cuando el RebirthHandler detecta que hay un nuevo modelo
+	local reloadJuicesEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Rebirth"):WaitForChild("ReloadJuices")
 
-			-- Recrear jugos para el nuevo modelo
+	local reloadConnection = reloadJuicesEvent.Event:Connect(function(targetPlayer)
+		-- Solo procesar si es para este jugador
+		if targetPlayer ~= player then return end
+
+		print("[PlacedJuices] 🔄 RECARGA SOLICITADA POR REBIRTH")
+		print("[PlacedJuices] Jugador:", player.Name)
+
+		-- Esperar un momento para que el modelo se actualice en el workspace
+		task.wait(0.5)
+
+		-- Obtener el nuevo modelo
+		local newModel = JuiceSystemUtils.findClonedModel(player)
+
+		if newModel and newModel.Parent then
+			print("[PlacedJuices] ✅ Nuevo modelo encontrado:", newModel.Name)
+			print("[PlacedJuices] 🔄 Recreando jugos y CollectZone...")
+
+			-- Actualizar referencia del modelo
+			SlotTracker.setCurrentModel(userId, newModel)
+
+			-- Recrear todo el sistema de jugos
 			task.spawn(function()
 				recreateAllJuicesForNewModel(player, newModel)
 			end)
-		end,
-		-- Callback cuando se elimina el modelo actual
-		function(player)
-			print("[PlacedJuices] ⚠️ MODELO ELIMINADO (Event)")
-			print("[PlacedJuices] Jugador:", player.Name)
-			print("[PlacedJuices] Limpiando jugos...")
-
-			local userId = player.UserId
-			if SlotTracker.hasPlayerData(userId) then
-				SlotTracker.cleanupAllSlotsWithDestruction(userId)
-				SlotTracker.clearCollectZoneConnection(userId)
-				SlotTracker.clearCollectZoneGuiConnection(userId)
-			end
+		else
+			warn("[PlacedJuices] ❌ No se pudo encontrar el nuevo modelo después del rebirth")
 		end
-	)
+	end)
+
+	-- Guardar la conexión para limpieza
+	SlotTracker.setReloadConnection(userId, reloadConnection)
 
 	-- Cuando se añade un juice
 	placedJuices.ChildAdded:Connect(function(child)

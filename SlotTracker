@@ -283,6 +283,23 @@ function SlotTracker.clearModelConnections(userId)
 	playerData[userId].modelConnections = {}
 end
 
+-- ⚡ Conexión para recarga desde Rebirth
+function SlotTracker.setReloadConnection(userId, connection)
+	if not playerData[userId] then return end
+	playerData[userId].reloadConnection = connection
+end
+
+function SlotTracker.clearReloadConnection(userId)
+	if not playerData[userId] then return end
+
+	if playerData[userId].reloadConnection then
+		pcall(function()
+			playerData[userId].reloadConnection:Disconnect()
+		end)
+		playerData[userId].reloadConnection = nil
+	end
+end
+
 function SlotTracker.setCurrentModel(userId, model)
 	if not playerData[userId] then return end
 	playerData[userId].currentModel = model
@@ -339,6 +356,7 @@ function SlotTracker.cleanupJuiceData(userId)
 	SlotTracker.clearCollectZoneGuiConnection(userId)
 
 	SlotTracker.clearModelMonitorConnection(userId)
+	SlotTracker.clearReloadConnection(userId)
 end
 
 function SlotTracker.cleanupAllSlotsWithDestruction(userId)
