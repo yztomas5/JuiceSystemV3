@@ -444,10 +444,25 @@ recreateAllJuicesForNewModel = function(player, newModel)
 	-- Espera adicional para slots individuales
 	task.wait(2)
 
+	-- Create loading billboard in CollectZone
+	local collectZone = slotsFolder:FindFirstChild("CollectZone")
+	local loadingBillboard = nil
+	if collectZone then
+		loadingBillboard = JuiceVisuals.createLoadingBillboard(collectZone)
+		if loadingBillboard then
+			JuiceVisuals.startLoadingPulse(loadingBillboard)
+			print("[PlacedJuices] 🔄 Loading billboard created and pulse started")
+		end
+	end
+
 	-- Recrear jugos
 	local placedJuices = player:FindFirstChild("PlacedJuices")
 	if not placedJuices then
 		print("[PlacedJuices] ⚠️ No hay jugos para recrear")
+		-- Remove loading billboard if no juices to recreate
+		if loadingBillboard then
+			JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+		end
 		return
 	end
 
@@ -500,7 +515,12 @@ recreateAllJuicesForNewModel = function(player, newModel)
 	print("[PlacedJuices] 🔌 Reconectando CollectZone...")
 	task.wait(1)
 
-	local collectZone = slotsFolder:FindFirstChild("CollectZone")
+	-- Note: collectZone is already found above, but we need to re-find it
+	-- in case the variable scope changed
+	if not collectZone then
+		collectZone = slotsFolder:FindFirstChild("CollectZone")
+	end
+
 	attempts = 0
 	while not collectZone and attempts < 10 and newModel.Parent do
 		task.wait(0.5)
@@ -515,6 +535,12 @@ recreateAllJuicesForNewModel = function(player, newModel)
 		print("[PlacedJuices] ✅ CollectZone ACTIVA")
 	else
 		warn("[PlacedJuices] ❌ CollectZone NO ENCONTRADA")
+	end
+
+	-- Remove loading billboard
+	if loadingBillboard then
+		JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+		print("[PlacedJuices] ✅ Loading billboard removed")
 	end
 
 	print("[PlacedJuices] ========================================")
@@ -539,11 +565,28 @@ local function initializePlacedJuices(player)
 	local currentModel = JuiceSystemUtils.findClonedModel(player)
 	SlotTracker.setCurrentModel(player.UserId, currentModel)
 
+	-- Get CollectZone and create loading billboard
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
+	local loadingBillboard = nil
+	if collectZone then
+		loadingBillboard = JuiceVisuals.createLoadingBillboard(collectZone)
+		if loadingBillboard then
+			JuiceVisuals.startLoadingPulse(loadingBillboard)
+			print("[PlacedJuices] Loading billboard created and pulse started")
+		end
+	end
+
 	-- Procesar juices existentes
 	for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
 		if juiceFolder:IsA("Folder") then
 			processPlacedJuice(player, juiceFolder)
 		end
+	end
+
+	-- Stop and remove loading billboard
+	if loadingBillboard then
+		JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+		print("[PlacedJuices] Loading billboard removed")
 	end
 
 	-- Configurar CollectZone
