@@ -2,6 +2,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CollectZoneVisuals = {}
 
+-- Import JuiceSystemUtils to find the cloned model
+local JuiceSystemPath = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"):WaitForChild("JuiceSystem")
+local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"))
+
 -- Constants
 local MONEY_PER_CASH = 1500
 local ROW_HEIGHT = 1 -- Each complete row occupies 1 stud in height
@@ -227,30 +231,14 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 		return
 	end
 
-	-- Find CollectZone and Content
-	local character = player.Character
-	if not character then
-		warn("[CollectZoneVisuals] Character not found")
-		return
-	end
-
-	local plotModel = character:FindFirstChild("PlotClone")
-	if not plotModel then
-		warn("[CollectZoneVisuals] PlotClone not found in character")
-		return
-	end
-
-	local slotsFolder = plotModel:FindFirstChild("Slots")
-	if not slotsFolder then
-		warn("[CollectZoneVisuals] Slots folder not found in PlotClone")
-		return
-	end
-
-	local collectZone = slotsFolder:FindFirstChild("CollectZone")
+	-- Find CollectZone using JuiceSystemUtils
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
 	if not collectZone then
-		warn("[CollectZoneVisuals] CollectZone not found in Slots")
+		warn("[CollectZoneVisuals] CollectZone not found for player:", player.Name)
 		return
 	end
+
+	print("[CollectZoneVisuals] CollectZone found:", collectZone:GetFullName())
 
 	local contentPart = getContentPart(collectZone)
 	if not contentPart then
@@ -267,17 +255,28 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 	local partsPerDepth = math.max(1, math.floor(contentSize.Z / cashSize.Z))
 	local partsPerLayer = partsPerRow * partsPerDepth
 
-	-- Calculate how many complete layers we have (these will be Filler)
-	local totalLayers = math.ceil(numCashParts / partsPerLayer)
-	local numCompleteLayers = math.floor(numCashParts / partsPerLayer)
+	-- Calculate maximum layers that can fit in Content height
+	local maxLayersThatFit = math.max(1, math.floor(contentSize.Y / cashSize.Y))
+
+	print("[CollectZoneVisuals] Parts per layer:", partsPerLayer, "Max layers that fit:", maxLayersThatFit)
+
+	-- Calculate how many complete layers we have (limited by Content height)
+	local totalLayersNeeded = math.ceil(numCashParts / partsPerLayer)
+	local actualTotalLayers = math.min(totalLayersNeeded, maxLayersThatFit)
+
+	-- If we exceed the max layers, cap it and show only what fits
+	local actualNumCashParts = math.min(numCashParts, actualTotalLayers * partsPerLayer)
+	local numCompleteLayers = math.floor(actualNumCashParts / partsPerLayer)
 
 	-- The top layer shows individual cash parts
-	local cashPartsInTopLayer = numCashParts % partsPerLayer
-	if cashPartsInTopLayer == 0 and numCashParts > 0 then
+	local cashPartsInTopLayer = actualNumCashParts % partsPerLayer
+	if cashPartsInTopLayer == 0 and actualNumCashParts > 0 then
 		-- If top layer is complete, show it as cash parts
 		cashPartsInTopLayer = partsPerLayer
 		numCompleteLayers = numCompleteLayers - 1
 	end
+
+	print("[CollectZoneVisuals] Actual layers:", actualTotalLayers, "Complete layers:", numCompleteLayers, "Cash parts in top layer:", cashPartsInTopLayer)
 
 	-- Clear existing cash parts
 	for _, part in ipairs(data.cashParts) do
