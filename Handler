@@ -1,0 +1,482 @@
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Trove = require(ReplicatedStorage.Modules.Data.Trove)
+local trove = Trove.new()
+
+local JuiceSystemPath = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"):WaitForChild("JuiceSystem")
+
+local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"))
+local SlotTracker = require(JuiceSystemPath:WaitForChild("SlotTracker"))
+local JuiceVisuals = require(JuiceSystemPath:WaitForChild("JuiceVisuals"))
+local JuiceCollection = require(JuiceSystemPath:WaitForChild("JuiceCollection"))
+local ModelChangeDetector = require(JuiceSystemPath:WaitForChild("ModelChangeDetector"))
+
+local juicesToolsFolder = ServerStorage:WaitForChild("Inventario"):WaitForChild("Juices")
+
+local processPlacedJuice
+local connectCollectZoneEvent
+local setupCollectZoneGuiUpdater
+local recreateAllJuicesForNewModel
+
+local playerTroves = {}
+
+local function createSlotJuiceTool(player, juiceFolder, slotNumber)
+	local userId = player.UserId
+
+	if not SlotTracker.hasPlayerData(userId) then
+		return
+	end
+
+	if JuiceSystemUtils.toolExistsInSlot(player, slotNumber) then
+		return
+	end
+
+	SlotTracker.clearSlotData(userId, slotNumber)
+
+	local modelValue = juiceFolder:FindFirstChild("Model")
+	local priceValue = juiceFolder:FindFirstChild("Price")
+	local pricePerSecValue = juiceFolder:FindFirstChild("PricePerSec")
+	local qualityValue = juiceFolder:FindFirstChild("Quality")
+	local ingredientsFolder = juiceFolder:FindFirstChild("Ingredients")
+
+	if not modelValue or not priceValue or not pricePerSecValue or not qualityValue then
+		return
+	end
+
+	local toolTemplate = juicesToolsFolder:FindFirstChild(modelValue.Value)
+	if not toolTemplate or not toolTemplate:IsA("Tool") then
+		return
+	end
+
+	local cancelToken = tick()
+	SlotTracker.setSlotData(userId, slotNumber, { cancelToken = cancelToken })
+
+	if not SlotTracker.hasPlayerData(userId) then
+		return
+	end
+
+	if not juiceFolder.Parent or juiceFolder.Parent.Name ~= "PlacedJuices" then
+		SlotTracker.clearSlotData(userId, slotNumber)
+		return
+	end
+
+	local slotData = SlotTracker.getSlotData(userId, slotNumber)
+	if not slotData or slotData.cancelToken ~= cancelToken then
+		return
+	end
+
+	if JuiceSystemUtils.toolExistsInSlot(player, slotNumber) then
+		SlotTracker.clearSlotData(userId, slotNumber)
+		return
+	end
+
+	local slotModel = JuiceSystemUtils.findSlotModel(player, slotNumber)
+	if not slotModel then
+		return
+	end
+
+	local clonedTool = toolTemplate:Clone()
+	clonedTool.Name = juiceFolder.Name .. "_SlotTool"
+
+	local typeValue = clonedTool:FindFirstChild("Type")
+	if not typeValue then
+		typeValue = Instance.new("StringValue")
+		typeValue.Name = "Type"
+		typeValue.Value = "Juice"
+		typeValue.Parent = clonedTool
+	else
+		typeValue.Value = "Juice"
+	end
+
+	local slotId = Instance.new("IntValue")
+	slotId.Name = "SlotId"
+	slotId.Value = slotNumber
+	slotId.Parent = clonedTool
+
+	local mixedColor = JuiceVisuals.getMixedColorFromIngredients(ingredientsFolder)
+
+	JuiceVisuals.applyJuiceTextures(clonedTool, mixedColor)
+
+	JuiceVisuals.applyMutationsToTool(clonedTool, ingredientsFolder)
+
+	local slotBasePart = slotModel:FindFirstChild("Base")
+	if not slotBasePart or not slotBasePart:IsA("BasePart") then
+		clonedTool:Destroy()
+		return
+	end
+
+	local toolBasePart = clonedTool:FindFirstChild("Base")
+	if not toolBasePart or not toolBasePart:IsA("BasePart") then
+		clonedTool:Destroy()
+		return
+	end
+
+	if not SlotTracker.hasPlayerData(userId) then
+		clonedTool:Destroy()
+		return
+	end
+
+	toolBasePart.CFrame = slotBasePart.CFrame
+	toolBasePart.Anchored = true
+	toolBasePart.CanCollide = false
+
+	local moneyGeneratedValue = juiceFolder:FindFirstChild("MoneyGenerated")
+	JuiceVisuals.setupJuiceInfoGui(
+		clonedTool,
+		juiceFolder.Name,
+		priceValue.Value,
+		pricePerSecValue.Value,
+		qualityValue.Value,
+		moneyGeneratedValue,
+		JuiceSystemUtils.formatNumberWithSuffixes
+	)
+
+	local billboard = JuiceVisuals.createIngredientsBillboard(slotModel, ingredientsFolder)
+
+	clonedTool.Parent = slotModel
+
+	if not SlotTracker.hasPlayerData(userId) then
+		JuiceSystemUtils.safeDestroy(clonedTool)
+		JuiceSystemUtils.safeDestroy(billboard)
+		return
+	end
+
+	SlotTracker.setSlotData(userId, slotNumber, {
+		tool = clonedTool,
+		billboard = billboard,
+		juiceFolder = juiceFolder,
+		cancelToken = cancelToken
+	})
+end
+
+local function connectCollectEvent(player, slotNumber)
+	local userId = player.UserId
+
+	if not SlotTracker.hasPlayerData(userId) then
+		return
+	end
+
+	local slotModel = JuiceSystemUtils.findSlotModel(player, slotNumber)
+	if not slotModel then return end
+
+	local collectPart = slotModel:FindFirstChild("Collect")
+	if not collectPart or not collectPart:IsA("BasePart") then
+		return
+	end
+
+	local connection = JuiceCollection.connectSlotCollection(player, slotNumber, collectPart, SlotTracker)
+
+	local slotData = SlotTracker.getSlotData(userId, slotNumber)
+	if slotData then
+		slotData.collectConnection = connection
+	else
+		SlotTracker.setSlotData(userId, slotNumber, { collectConnection = connection })
+	end
+end
+
+processPlacedJuice = function(player, juiceFolder)
+	if not SlotTracker.hasPlayerData(player.UserId) then
+		return
+	end
+
+	local slotValue = juiceFolder:FindFirstChild("Slot")
+	if not slotValue or not slotValue:IsA("IntValue") or slotValue.Value == 0 then
+		return
+	end
+
+	local slotNumber = slotValue.Value
+
+	createSlotJuiceTool(player, juiceFolder, slotNumber)
+
+	connectCollectEvent(player, slotNumber)
+end
+
+local function removePlacedJuice(player, juiceFolder, slotNumber)
+	if not SlotTracker.hasPlayerData(player.UserId) then
+		return
+	end
+
+	SlotTracker.clearSlotConnection(player.UserId, juiceFolder)
+
+	SlotTracker.clearSlotData(player.UserId, slotNumber)
+end
+
+local function updateCollectZoneGui(player)
+	if not SlotTracker.hasPlayerData(player.UserId) then return end
+
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
+	if not collectZone then return end
+
+	JuiceCollection.updateCollectZoneGui(player, collectZone, JuiceSystemUtils.formatNumberWithSuffixes)
+end
+
+connectCollectZoneEvent = function(player)
+	local userId = player.UserId
+
+	if not SlotTracker.hasPlayerData(userId) then
+		return
+	end
+
+	SlotTracker.clearCollectZoneConnection(userId)
+
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
+	if not collectZone then
+		return
+	end
+
+	local collectPart = collectZone:FindFirstChild("Collect")
+	if not collectPart or not collectPart:IsA("BasePart") then
+		return
+	end
+
+	local connection = JuiceCollection.connectCollectZoneCollection(player, collectPart, SlotTracker)
+
+	SlotTracker.setCollectZoneConnection(userId, connection)
+end
+
+setupCollectZoneGuiUpdater = function(player)
+	local userId = player.UserId
+
+	if not SlotTracker.hasPlayerData(userId) then return end
+
+	SlotTracker.clearCollectZoneGuiConnection(userId)
+
+	local lastGuiUpdate = os.time()
+	local connection = RunService.Heartbeat:Connect(function()
+		local currentTime = os.time()
+		if currentTime > lastGuiUpdate then
+			lastGuiUpdate = currentTime
+			updateCollectZoneGui(player)
+		end
+	end)
+
+	SlotTracker.setCollectZoneGuiConnection(userId, connection)
+end
+
+recreateAllJuicesForNewModel = function(player, newModel)
+	local userId = player.UserId
+
+	if not SlotTracker.hasPlayerData(userId) then
+		return
+	end
+
+	SlotTracker.cleanupAllSlotsWithDestruction(userId)
+	SlotTracker.clearCollectZoneConnection(userId)
+	SlotTracker.clearCollectZoneGuiConnection(userId)
+
+	local slotsFolder = newModel:WaitForChild("Slots", 5)
+	if not slotsFolder then
+		return
+	end
+
+	local placeFolder = slotsFolder:WaitForChild("Place", 5)
+	if not placeFolder then
+		return
+	end
+
+	local collectZone = slotsFolder:WaitForChild("CollectZone", 5)
+
+	local loadingBillboard = nil
+	if collectZone then
+		loadingBillboard = JuiceVisuals.createLoadingBillboard(collectZone)
+		if loadingBillboard then
+			JuiceVisuals.startLoadingPulse(loadingBillboard)
+		end
+	end
+
+	local placedJuices = player:FindFirstChild("PlacedJuices")
+	if not placedJuices then
+		if loadingBillboard then
+			JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+		end
+		return
+	end
+
+	local juicesToRecreate = {}
+	for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
+		if juiceFolder:IsA("Folder") then
+			local slotValue = juiceFolder:FindFirstChild("Slot")
+			if slotValue and slotValue:IsA("IntValue") and slotValue.Value > 0 then
+				table.insert(juicesToRecreate, {
+					folder = juiceFolder,
+					slot = slotValue.Value,
+					name = juiceFolder.Name
+				})
+			end
+		end
+	end
+
+	for i, juiceInfo in ipairs(juicesToRecreate) do
+		if not SlotTracker.hasPlayerData(userId) or not newModel.Parent then
+			if loadingBillboard then
+				JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+			end
+			return
+		end
+
+		local slotModel = placeFolder:WaitForChild(tostring(juiceInfo.slot), 2)
+
+		if slotModel then
+			processPlacedJuice(player, juiceInfo.folder)
+		end
+	end
+
+	if collectZone then
+		connectCollectZoneEvent(player)
+		setupCollectZoneGuiUpdater(player)
+	end
+
+	if loadingBillboard then
+		JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+	end
+end
+
+local function initializePlacedJuices(player)
+	local placedJuices = player:WaitForChild("PlacedJuices", 10)
+	if not placedJuices then return end
+
+	JuiceCollection.calculateOfflineMoney(player)
+
+	task.wait(1)
+
+	local currentModel = JuiceSystemUtils.findClonedModel(player)
+	SlotTracker.setCurrentModel(player.UserId, currentModel)
+
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
+	local loadingBillboard = nil
+	if collectZone then
+		loadingBillboard = JuiceVisuals.createLoadingBillboard(collectZone)
+		if loadingBillboard then
+			JuiceVisuals.startLoadingPulse(loadingBillboard)
+		end
+	end
+
+	for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
+		if juiceFolder:IsA("Folder") then
+			processPlacedJuice(player, juiceFolder)
+		end
+	end
+
+	if loadingBillboard then
+		JuiceVisuals.stopLoadingBillboard(loadingBillboard)
+	end
+
+	task.wait(0.5)
+	connectCollectZoneEvent(player)
+	setupCollectZoneGuiUpdater(player)
+end
+
+local function setupPlacedJuicesWatcher(player)
+	local userId = player.UserId
+
+	SlotTracker.initializeJuiceData(userId)
+
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
+
+	local placedJuices = player:WaitForChild("PlacedJuices", 10)
+	if not placedJuices then return end
+
+	task.spawn(function()
+		initializePlacedJuices(player)
+	end)
+
+	local initialModel = JuiceSystemUtils.findClonedModel(player)
+	SlotTracker.setCurrentModel(userId, initialModel)
+
+	local reloadJuicesEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Rebirth"):WaitForChild("ReloadJuices")
+
+	local reloadConnection = reloadJuicesEvent.Event:Connect(function(targetPlayer)
+		if targetPlayer ~= player then return end
+
+		task.wait(0.5)
+
+		local newModel = JuiceSystemUtils.findClonedModel(player)
+
+		if newModel and newModel.Parent then
+			SlotTracker.setCurrentModel(userId, newModel)
+
+			task.spawn(function()
+				recreateAllJuicesForNewModel(player, newModel)
+			end)
+		end
+	end)
+
+	SlotTracker.setReloadConnection(userId, reloadConnection)
+
+	playerTrove:Connect(placedJuices.ChildAdded, function(child)
+		if child:IsA("Folder") then
+			task.wait(0.1)
+			processPlacedJuice(player, child)
+		end
+	end)
+
+	playerTrove:Connect(placedJuices.ChildRemoved, function(child)
+		if not SlotTracker.hasPlayerData(userId) then return end
+
+		if child:IsA("Folder") then
+			local slotValue = child:FindFirstChild("Slot")
+			if slotValue and slotValue:IsA("IntValue") then
+				removePlacedJuice(player, child, slotValue.Value)
+			end
+		end
+	end)
+
+	playerTrove:Connect(placedJuices.DescendantAdded, function(descendant)
+		if descendant.Name == "Slot" and descendant:IsA("IntValue") then
+			local juiceFolder = descendant.Parent
+			if not juiceFolder or not juiceFolder:IsA("Folder") then return end
+
+			SlotTracker.clearSlotConnection(userId, juiceFolder)
+
+			local connection = descendant:GetPropertyChangedSignal("Value"):Connect(function()
+				local oldSlot = nil
+				local playerData = SlotTracker.getPlayerData(userId)
+				if playerData and playerData.slots then
+					for slotNum, slotData in pairs(playerData.slots) do
+						if slotData.juiceFolder == juiceFolder then
+							oldSlot = slotNum
+							break
+						end
+					end
+				end
+
+				if oldSlot then
+					SlotTracker.clearSlotData(userId, oldSlot)
+				end
+
+				if descendant.Value > 0 then
+					task.wait(0.1)
+					processPlacedJuice(player, juiceFolder)
+				end
+			end)
+
+			SlotTracker.setSlotConnection(userId, juiceFolder, connection)
+		end
+	end)
+end
+
+JuiceCollection.startMoneyGenerationSystem()
+
+trove:Connect(Players.PlayerAdded, function(player)
+	setupPlacedJuicesWatcher(player)
+end)
+
+trove:Connect(Players.PlayerRemoving, function(player)
+	JuiceCollection.saveDisconnectTime(player)
+	SlotTracker.cleanupJuiceData(player.UserId)
+
+	if playerTroves[player] then
+		playerTroves[player]:Destroy()
+		playerTroves[player] = nil
+	end
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(function()
+		setupPlacedJuicesWatcher(player)
+	end)
+end
