@@ -13,6 +13,7 @@ local SlotTracker = require(JuiceSystemPath:WaitForChild("SlotTracker"))
 local JuiceVisuals = require(JuiceSystemPath:WaitForChild("JuiceVisuals"))
 local JuiceCollection = require(JuiceSystemPath:WaitForChild("JuiceCollection"))
 local ModelChangeDetector = require(JuiceSystemPath:WaitForChild("ModelChangeDetector"))
+local CollectZoneVisuals = require(JuiceSystemPath:WaitForChild("CollectZoneVisuals"))
 
 local juicesToolsFolder = ServerStorage:WaitForChild("Inventario"):WaitForChild("Juices")
 
@@ -211,6 +212,10 @@ local function updateCollectZoneGui(player)
 	if not collectZone then return end
 
 	JuiceCollection.updateCollectZoneGui(player, collectZone, JuiceSystemUtils.formatNumberWithSuffixes)
+
+	-- Update visual money stacking
+	local totalMoney = JuiceCollection.getTotalMoneyGenerated(player)
+	CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoney)
 end
 
 connectCollectZoneEvent = function(player)
@@ -327,6 +332,7 @@ recreateAllJuicesForNewModel = function(player, newModel)
 	if collectZone then
 		connectCollectZoneEvent(player)
 		setupCollectZoneGuiUpdater(player)
+		CollectZoneVisuals.initializeCollectZoneVisuals(player)
 	end
 
 	if loadingBillboard then
@@ -367,6 +373,7 @@ local function initializePlacedJuices(player)
 	task.wait(0.5)
 	connectCollectZoneEvent(player)
 	setupCollectZoneGuiUpdater(player)
+	CollectZoneVisuals.initializeCollectZoneVisuals(player)
 end
 
 local function setupPlacedJuicesWatcher(player)
@@ -467,6 +474,7 @@ end)
 
 trove:Connect(Players.PlayerRemoving, function(player)
 	JuiceCollection.saveDisconnectTime(player)
+	CollectZoneVisuals.clearPlayerCache(player.UserId)
 	SlotTracker.cleanupJuiceData(player.UserId)
 
 	if playerTroves[player] then

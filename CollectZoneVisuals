@@ -1,0 +1,292 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CollectZoneVisuals = {}
+
+-- Constants
+local MONEY_PER_CASH = 1500
+local ROW_HEIGHT = 1 -- Each complete row occupies 1 stud in height
+
+-- Cache for CollectZone data per player
+local collectZoneCache = {}
+
+local function getCollectZoneData(player)
+	local userId = player.UserId
+	if not collectZoneCache[userId] then
+		collectZoneCache[userId] = {
+			cashParts = {},
+			fillerPart = nil,
+			lastMoneyAmount = 0
+		}
+	end
+	return collectZoneCache[userId]
+end
+
+function CollectZoneVisuals.clearPlayerCache(userId)
+	if collectZoneCache[userId] then
+		local data = collectZoneCache[userId]
+
+		-- Destroy all cash parts
+		for _, part in ipairs(data.cashParts) do
+			if part and part.Parent then
+				part:Destroy()
+			end
+		end
+
+		-- Destroy filler part
+		if data.fillerPart and data.fillerPart.Parent then
+			data.fillerPart:Destroy()
+		end
+
+		collectZoneCache[userId] = nil
+	end
+end
+
+local function getCashAndFillerTemplates()
+	local success, result = pcall(function()
+		local plotModels = ReplicatedStorage:WaitForChild("Assets", 5):WaitForChild("Models", 5):WaitForChild("Plot", 5)
+		local collectZoneFolder = plotModels:WaitForChild("CollectZone", 5)
+
+		local cashTemplate = collectZoneFolder:FindFirstChild("Cash")
+		local fillerTemplate = collectZoneFolder:FindFirstChild("Filler")
+
+		return cashTemplate, fillerTemplate
+	end)
+
+	if success then
+		return result
+	else
+		warn("Failed to get Cash/Filler templates from ReplicatedStorage")
+		return nil, nil
+	end
+end
+
+local function getContentPart(collectZone)
+	if not collectZone then return nil end
+
+	-- Try to find Content part inside CollectZone
+	for _, child in ipairs(collectZone:GetDescendants()) do
+		if child.Name == "Content" and child:IsA("BasePart") then
+			return child
+		end
+	end
+
+	return nil
+end
+
+local function calculateCashPositions(contentPart, cashSize, numCashParts)
+	local positions = {}
+	local orientations = {}
+
+	if not contentPart then return positions, orientations, 0 end
+
+	-- Get Content dimensions and rotation
+	local contentSize = contentPart.Size
+	local contentCFrame = contentPart.CFrame
+
+	-- Calculate how many cash parts fit in one row (horizontally along X axis)
+	local cashWidth = cashSize.X
+	local cashDepth = cashSize.Z
+	local cashHeight = cashSize.Y
+
+	local partsPerRow = math.max(1, math.floor(contentSize.X / cashWidth))
+	local partsPerDepth = math.max(1, math.floor(contentSize.Z / cashDepth))
+	local partsPerLayer = partsPerRow * partsPerDepth
+
+	-- Calculate starting position (bottom-left-front corner of Content)
+	-- We start from the bottom because we'll build upwards
+	local startOffset = Vector3.new(
+		-contentSize.X / 2 + cashWidth / 2,  -- Start at left edge
+		-contentSize.Y / 2 + cashHeight / 2,  -- Start at bottom
+		-contentSize.Z / 2 + cashDepth / 2   -- Start at front
+	)
+
+	for i = 1, numCashParts do
+		local index = i - 1
+
+		-- Calculate which layer (vertical level), row (depth), and column (width)
+		local layer = math.floor(index / partsPerLayer)
+		local indexInLayer = index % partsPerLayer
+		local row = math.floor(indexInLayer / partsPerRow)  -- Goes back in Z
+		local col = indexInLayer % partsPerRow  -- Goes right in X
+
+		-- Calculate position offset from starting position
+		local offset = Vector3.new(
+			col * cashWidth,      -- Move right
+			layer * cashHeight,   -- Move up
+			row * cashDepth       -- Move back
+		)
+
+		-- Calculate world position relative to Content part
+		local localPos = startOffset + offset
+		local worldPos = contentCFrame:PointToWorldSpace(localPos)
+		local worldRot = contentCFrame.Rotation
+
+		table.insert(positions, worldPos)
+		table.insert(orientations, worldRot)
+	end
+
+	return positions, orientations, partsPerLayer
+end
+
+local function updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, cashHeight, existingFiller)
+	if numCompleteLayers <= 0 then
+		-- No complete layers, remove filler if exists
+		if existingFiller and existingFiller.Parent then
+			existingFiller:Destroy()
+		end
+		return nil
+	end
+
+	local fillerPart = existingFiller
+
+	if not fillerPart or not fillerPart.Parent then
+		fillerPart = fillerTemplate:Clone()
+	end
+
+	-- Calculate filler size and position
+	local contentSize = contentPart.Size
+	local contentCFrame = contentPart.CFrame
+
+	-- Filler height is based on number of complete layers
+	local fillerHeight = numCompleteLayers * cashHeight
+	local fillerSize = Vector3.new(contentSize.X, fillerHeight, contentSize.Z)
+
+	-- Position filler at the bottom of content, centered
+	-- The offset is from the center of content to the center of filler
+	local fillerOffset = Vector3.new(
+		0,  -- Centered horizontally
+		-contentSize.Y / 2 + fillerHeight / 2,  -- Bottom-aligned, then offset up by half filler height
+		0   -- Centered depth-wise
+	)
+
+	local fillerPos = contentCFrame:PointToWorldSpace(fillerOffset)
+
+	fillerPart.Size = fillerSize
+	fillerPart.CFrame = CFrame.new(fillerPos) * contentCFrame.Rotation
+	fillerPart.Anchored = true
+	fillerPart.CanCollide = false
+
+	if not fillerPart.Parent then
+		fillerPart.Parent = contentPart
+	end
+
+	return fillerPart
+end
+
+function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated)
+	local userId = player.UserId
+	local data = getCollectZoneData(player)
+
+	-- Only update if money changed
+	if data.lastMoneyAmount == totalMoneyGenerated then
+		return
+	end
+
+	data.lastMoneyAmount = totalMoneyGenerated
+
+	-- Calculate how many cash parts we need
+	local numCashParts = math.floor(totalMoneyGenerated / MONEY_PER_CASH)
+
+	-- Get templates
+	local cashTemplate, fillerTemplate = getCashAndFillerTemplates()
+	if not cashTemplate then
+		warn("Cash template not found")
+		return
+	end
+
+	-- Find CollectZone and Content
+	local character = player.Character
+	if not character then return end
+
+	local plotModel = character:FindFirstChild("PlotClone")
+	if not plotModel then return end
+
+	local slotsFolder = plotModel:FindFirstChild("Slots")
+	if not slotsFolder then return end
+
+	local collectZone = slotsFolder:FindFirstChild("CollectZone")
+	if not collectZone then return end
+
+	local contentPart = getContentPart(collectZone)
+	if not contentPart then
+		warn("Content part not found in CollectZone")
+		return
+	end
+
+	-- Get cash size from template
+	local cashSize = cashTemplate.Size
+
+	-- Calculate how many parts fit per layer
+	local contentSize = contentPart.Size
+	local partsPerRow = math.max(1, math.floor(contentSize.X / cashSize.X))
+	local partsPerDepth = math.max(1, math.floor(contentSize.Z / cashSize.Z))
+	local partsPerLayer = partsPerRow * partsPerDepth
+
+	-- Calculate how many complete layers we have (these will be Filler)
+	local totalLayers = math.ceil(numCashParts / partsPerLayer)
+	local numCompleteLayers = math.floor(numCashParts / partsPerLayer)
+
+	-- The top layer shows individual cash parts
+	local cashPartsInTopLayer = numCashParts % partsPerLayer
+	if cashPartsInTopLayer == 0 and numCashParts > 0 then
+		-- If top layer is complete, show it as cash parts
+		cashPartsInTopLayer = partsPerLayer
+		numCompleteLayers = numCompleteLayers - 1
+	end
+
+	-- Clear existing cash parts
+	for _, part in ipairs(data.cashParts) do
+		if part and part.Parent then
+			part:Destroy()
+		end
+	end
+	data.cashParts = {}
+
+	-- Create cash parts for the top layer only
+	if cashPartsInTopLayer > 0 then
+		-- Calculate positions starting from bottom, then offset to top layer
+		local positions, orientations = calculateCashPositions(contentPart, cashSize, cashPartsInTopLayer)
+
+		for i = 1, cashPartsInTopLayer do
+			if positions[i] then
+				local cashPart = cashTemplate:Clone()
+
+				-- Apply vertical offset to move to the top layer
+				local layerOffset = Vector3.new(0, numCompleteLayers * cashSize.Y, 0)
+				local finalPos = positions[i] + layerOffset
+
+				cashPart.CFrame = CFrame.new(finalPos) * orientations[i]
+				cashPart.Anchored = true
+				cashPart.CanCollide = false
+				cashPart.Parent = contentPart
+
+				table.insert(data.cashParts, cashPart)
+			end
+		end
+	end
+
+	-- Update or create filler for complete layers
+	if fillerTemplate then
+		data.fillerPart = updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, cashSize.Y, data.fillerPart)
+	end
+end
+
+function CollectZoneVisuals.initializeCollectZoneVisuals(player)
+	-- Initialize with current money
+	local placedJuices = player:FindFirstChild("PlacedJuices")
+	if not placedJuices then return end
+
+	local totalMoney = 0
+	for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
+		if juiceFolder:IsA("Folder") then
+			local moneyGenerated = juiceFolder:FindFirstChild("MoneyGenerated")
+			if moneyGenerated and moneyGenerated:IsA("IntValue") then
+				totalMoney = totalMoney + moneyGenerated.Value
+			end
+		end
+	end
+
+	CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoney)
+end
+
+return CollectZoneVisuals
