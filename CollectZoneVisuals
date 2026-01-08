@@ -8,7 +8,8 @@ local JuiceSystemPath = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("
 local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"))
 
 -- Constants
-local MONEY_PER_CASH = 1500
+local FIRST_CASH_COST = 10 -- First cash part costs 10 money
+local COST_INCREMENT = 1 -- Each subsequent cash part costs 1 more
 local ROW_HEIGHT = 1 -- Each complete row occupies 1 stud in height
 
 -- Animation settings
@@ -19,6 +20,34 @@ local ANIMATION_EASING_DIRECTION = Enum.EasingDirection.Out
 
 -- Cache for CollectZone data per player
 local collectZoneCache = {}
+
+local function calculateNumCashParts(totalMoney)
+	-- Calculate how many cash parts can be afforded with logarithmic cost
+	-- Cost progression: 10, 11, 12, 13, ...
+	-- Sum formula for arithmetic sequence: S = n/2 * (2*a + (n-1)*d)
+	-- Where: S = totalMoney, a = FIRST_CASH_COST, d = COST_INCREMENT, n = number of parts
+	-- Rearranging: n² + (2a-d)n - 2S = 0
+	-- Solution: n = (-(2a-d) + sqrt((2a-d)² + 8S)) / 2
+
+	if totalMoney < FIRST_CASH_COST then
+		return 0
+	end
+
+	local a = FIRST_CASH_COST
+	local d = COST_INCREMENT
+	local S = totalMoney
+
+	-- Quadratic formula coefficients for: n² + bn - 2S = 0
+	-- where b = 2a - d = 2*10 - 1 = 19
+	local b = 2 * a - d
+
+	-- n = (-b + sqrt(b² + 8S)) / 2
+	local discriminant = b * b + 8 * S
+	local n = (-b + math.sqrt(discriminant)) / 2
+
+	-- Return the integer part (number of complete cash parts we can afford)
+	return math.floor(n)
+end
 
 local function getCollectZoneData(player)
 	local userId = player.UserId
@@ -358,9 +387,9 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 
 	data.lastMoneyAmount = totalMoneyGenerated
 
-	-- Calculate how many cash parts we need
-	local numCashParts = math.floor(totalMoneyGenerated / MONEY_PER_CASH)
-	print("[CollectZoneVisuals] Number of cash parts needed:", numCashParts)
+	-- Calculate how many cash parts we need using logarithmic progression
+	local numCashParts = calculateNumCashParts(totalMoneyGenerated)
+	print("[CollectZoneVisuals] Number of cash parts needed:", numCashParts, "for money:", totalMoneyGenerated)
 
 	-- Get templates
 	local cashTemplate, fillerTemplate = getCashAndFillerTemplates()
