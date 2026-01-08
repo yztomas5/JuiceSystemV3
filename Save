@@ -1,0 +1,98 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local DataModules = Modules:WaitForChild("Data")
+
+local Trove = require(DataModules:WaitForChild("Trove"))
+local DataSaver = require(DataModules:WaitForChild("DataSaver"))
+
+local playerTroves = {}
+
+local function updatePlacedJuicesInProfile(player)
+	local profile = DataSaver.GetProfile(player)
+	if not profile then return end
+
+	local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+	if not placedJuicesFolder then
+		profile.Data.PlacedJuices = {}
+		return
+	end
+
+	profile.Data.PlacedJuices = DataSaver.SerializeFolder(placedJuicesFolder)
+end
+
+local function loadPlacedJuicesFromProfile(player, profile)
+	local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+	if not placedJuicesFolder then
+		placedJuicesFolder = Instance.new("Folder")
+		placedJuicesFolder.Name = "PlacedJuices"
+		placedJuicesFolder.Parent = player
+	end
+
+	if profile.Data.PlacedJuices and #profile.Data.PlacedJuices > 0 then
+		DataSaver.DeserializeFolder(profile.Data.PlacedJuices, placedJuicesFolder)
+	end
+end
+
+local function connectPlacedJuicesChanges(player, playerTrove)
+	local placedJuicesFolder = player:FindFirstChild("PlacedJuices")
+	if not placedJuicesFolder then return end
+
+	playerTrove:Connect(placedJuicesFolder.ChildAdded, function()
+		updatePlacedJuicesInProfile(player)
+	end)
+
+	playerTrove:Connect(placedJuicesFolder.ChildRemoved, function()
+		updatePlacedJuicesInProfile(player)
+	end)
+
+	playerTrove:Connect(placedJuicesFolder.DescendantAdded, function()
+		updatePlacedJuicesInProfile(player)
+	end)
+
+	playerTrove:Connect(placedJuicesFolder.DescendantRemoving, function()
+		updatePlacedJuicesInProfile(player)
+	end)
+end
+
+local function PlayerAdded(player)
+	local maxWait = 10
+	local waited = 0
+	local profile = DataSaver.GetProfile(player)
+
+	while not profile and waited < maxWait do
+		task.wait(0.1)
+		waited = waited + 0.1
+		profile = DataSaver.GetProfile(player)
+	end
+
+	if not profile then
+		warn(`[PlacedJuices]: Failed to get profile for {player.Name}`)
+		return
+	end
+
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
+
+	loadPlacedJuicesFromProfile(player, profile)
+	connectPlacedJuicesChanges(player, playerTrove)
+end
+
+local function PlayerRemoving(player)
+	updatePlacedJuicesInProfile(player)
+
+	if playerTroves[player] then
+		playerTroves[player]:Destroy()
+		playerTroves[player] = nil
+	end
+end
+
+local mainTrove = Trove.new()
+
+mainTrove:Connect(Players.PlayerAdded, PlayerAdded)
+mainTrove:Connect(Players.PlayerRemoving, PlayerRemoving)
+
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(PlayerAdded, player)
+end
