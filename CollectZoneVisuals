@@ -9,7 +9,7 @@ local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"
 
 -- Constants
 local FIRST_CASH_COST = 10 -- First cash part costs 10 money
-local COST_INCREMENT = 1 -- Each subsequent cash part costs 1 more
+local COST_MULTIPLIER = 1.15 -- Each subsequent cash part costs 1.15x more (geometric progression)
 local ROW_HEIGHT = 1 -- Each complete row occupies 1 stud in height
 
 -- Animation settings
@@ -22,28 +22,32 @@ local ANIMATION_EASING_DIRECTION = Enum.EasingDirection.Out
 local collectZoneCache = {}
 
 local function calculateNumCashParts(totalMoney)
-	-- Calculate how many cash parts can be afforded with logarithmic cost
-	-- Cost progression: 10, 11, 12, 13, ...
-	-- Sum formula for arithmetic sequence: S = n/2 * (2*a + (n-1)*d)
-	-- Where: S = totalMoney, a = FIRST_CASH_COST, d = COST_INCREMENT, n = number of parts
-	-- Rearranging: n² + (2a-d)n - 2S = 0
-	-- Solution: n = (-(2a-d) + sqrt((2a-d)² + 8S)) / 2
+	-- Calculate how many cash parts can be afforded with geometric progression
+	-- Cost progression: 10, 10*1.15, 10*1.15², 10*1.15³, ...
+	-- Sum formula for geometric series: S = a * (r^n - 1) / (r - 1)
+	-- Where: S = totalMoney, a = FIRST_CASH_COST, r = COST_MULTIPLIER, n = number of parts
+	-- Solving for n: n = log(S * (r - 1) / a + 1) / log(r)
 
 	if totalMoney < FIRST_CASH_COST then
 		return 0
 	end
 
 	local a = FIRST_CASH_COST
-	local d = COST_INCREMENT
+	local r = COST_MULTIPLIER
 	local S = totalMoney
 
-	-- Quadratic formula coefficients for: n² + bn - 2S = 0
-	-- where b = 2a - d = 2*10 - 1 = 19
-	local b = 2 * a - d
+	-- For geometric series: S = a * (r^n - 1) / (r - 1)
+	-- Rearranging: r^n = S * (r - 1) / a + 1
+	-- Taking log: n = log(S * (r - 1) / a + 1) / log(r)
 
-	-- n = (-b + sqrt(b² + 8S)) / 2
-	local discriminant = b * b + 8 * S
-	local n = (-b + math.sqrt(discriminant)) / 2
+	local term = S * (r - 1) / a + 1
+
+	-- Make sure term is positive before taking log
+	if term <= 0 then
+		return 0
+	end
+
+	local n = math.log(term) / math.log(r)
 
 	-- Return the integer part (number of complete cash parts we can afford)
 	return math.floor(n)
