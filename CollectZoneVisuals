@@ -42,34 +42,63 @@ function CollectZoneVisuals.clearPlayerCache(userId)
 end
 
 local function getCashAndFillerTemplates()
-	local success, result = pcall(function()
-		local plotModels = ReplicatedStorage:WaitForChild("Assets", 5):WaitForChild("Models", 5):WaitForChild("Plot", 5)
-		local collectZoneFolder = plotModels:WaitForChild("CollectZone", 5)
-
-		local cashTemplate = collectZoneFolder:FindFirstChild("Cash")
-		local fillerTemplate = collectZoneFolder:FindFirstChild("Filler")
-
-		return cashTemplate, fillerTemplate
-	end)
-
-	if success then
-		return result
-	else
-		warn("Failed to get Cash/Filler templates from ReplicatedStorage")
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	if not assets then
+		warn("[CollectZoneVisuals] Assets folder not found")
 		return nil, nil
 	end
+
+	local models = assets:FindFirstChild("Models")
+	if not models then
+		warn("[CollectZoneVisuals] Models folder not found")
+		return nil, nil
+	end
+
+	local plot = models:FindFirstChild("Plot")
+	if not plot then
+		warn("[CollectZoneVisuals] Plot folder not found")
+		return nil, nil
+	end
+
+	local collectZoneFolder = plot:FindFirstChild("CollectZone")
+	if not collectZoneFolder then
+		warn("[CollectZoneVisuals] CollectZone folder not found in Plot")
+		return nil, nil
+	end
+
+	local cash = collectZoneFolder:FindFirstChild("Cash")
+	local filler = collectZoneFolder:FindFirstChild("Filler")
+
+	if not cash then
+		warn("[CollectZoneVisuals] Cash template not found in CollectZone")
+	else
+		print("[CollectZoneVisuals] Cash template found:", cash:GetFullName())
+	end
+
+	if not filler then
+		warn("[CollectZoneVisuals] Filler template not found in CollectZone")
+	else
+		print("[CollectZoneVisuals] Filler template found:", filler:GetFullName())
+	end
+
+	return cash, filler
 end
 
 local function getContentPart(collectZone)
-	if not collectZone then return nil end
+	if not collectZone then
+		warn("[CollectZoneVisuals] CollectZone is nil in getContentPart")
+		return nil
+	end
 
 	-- Try to find Content part inside CollectZone
 	for _, child in ipairs(collectZone:GetDescendants()) do
 		if child.Name == "Content" and child:IsA("BasePart") then
+			print("[CollectZoneVisuals] Content part found:", child:GetFullName(), "Size:", child.Size)
 			return child
 		end
 	end
 
+	warn("[CollectZoneVisuals] Content part not found in CollectZone:", collectZone:GetFullName())
 	return nil
 end
 
@@ -177,8 +206,11 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 	local userId = player.UserId
 	local data = getCollectZoneData(player)
 
+	print("[CollectZoneVisuals] updateCollectZoneVisuals called for player:", player.Name, "Money:", totalMoneyGenerated)
+
 	-- Only update if money changed
 	if data.lastMoneyAmount == totalMoneyGenerated then
+		print("[CollectZoneVisuals] Money hasn't changed, skipping update")
 		return
 	end
 
@@ -186,30 +218,43 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 
 	-- Calculate how many cash parts we need
 	local numCashParts = math.floor(totalMoneyGenerated / MONEY_PER_CASH)
+	print("[CollectZoneVisuals] Number of cash parts needed:", numCashParts)
 
 	-- Get templates
 	local cashTemplate, fillerTemplate = getCashAndFillerTemplates()
 	if not cashTemplate then
-		warn("Cash template not found")
+		warn("[CollectZoneVisuals] Cash template not found, aborting")
 		return
 	end
 
 	-- Find CollectZone and Content
 	local character = player.Character
-	if not character then return end
+	if not character then
+		warn("[CollectZoneVisuals] Character not found")
+		return
+	end
 
 	local plotModel = character:FindFirstChild("PlotClone")
-	if not plotModel then return end
+	if not plotModel then
+		warn("[CollectZoneVisuals] PlotClone not found in character")
+		return
+	end
 
 	local slotsFolder = plotModel:FindFirstChild("Slots")
-	if not slotsFolder then return end
+	if not slotsFolder then
+		warn("[CollectZoneVisuals] Slots folder not found in PlotClone")
+		return
+	end
 
 	local collectZone = slotsFolder:FindFirstChild("CollectZone")
-	if not collectZone then return end
+	if not collectZone then
+		warn("[CollectZoneVisuals] CollectZone not found in Slots")
+		return
+	end
 
 	local contentPart = getContentPart(collectZone)
 	if not contentPart then
-		warn("Content part not found in CollectZone")
+		warn("[CollectZoneVisuals] Content part not found in CollectZone, aborting")
 		return
 	end
 
@@ -244,8 +289,10 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 
 	-- Create cash parts for the top layer only
 	if cashPartsInTopLayer > 0 then
+		print("[CollectZoneVisuals] Creating", cashPartsInTopLayer, "cash parts for top layer")
 		-- Calculate positions starting from bottom, then offset to top layer
 		local positions, orientations = calculateCashPositions(contentPart, cashSize, cashPartsInTopLayer)
+		print("[CollectZoneVisuals] Calculated", #positions, "positions")
 
 		for i = 1, cashPartsInTopLayer do
 			if positions[i] then
@@ -261,20 +308,35 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 				cashPart.Parent = contentPart
 
 				table.insert(data.cashParts, cashPart)
+				print("[CollectZoneVisuals] Created cash part", i, "at position:", finalPos)
 			end
 		end
+		print("[CollectZoneVisuals] Total cash parts created:", #data.cashParts)
+	else
+		print("[CollectZoneVisuals] No cash parts to show in top layer")
 	end
 
 	-- Update or create filler for complete layers
 	if fillerTemplate then
+		print("[CollectZoneVisuals] Updating filler for", numCompleteLayers, "complete layers")
 		data.fillerPart = updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, cashSize.Y, data.fillerPart)
+		if data.fillerPart then
+			print("[CollectZoneVisuals] Filler part created/updated, Size:", data.fillerPart.Size)
+		end
 	end
+
+	print("[CollectZoneVisuals] Update complete!")
 end
 
 function CollectZoneVisuals.initializeCollectZoneVisuals(player)
+	print("[CollectZoneVisuals] initializeCollectZoneVisuals called for player:", player.Name)
+
 	-- Initialize with current money
 	local placedJuices = player:FindFirstChild("PlacedJuices")
-	if not placedJuices then return end
+	if not placedJuices then
+		warn("[CollectZoneVisuals] PlacedJuices folder not found")
+		return
+	end
 
 	local totalMoney = 0
 	for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
@@ -286,6 +348,7 @@ function CollectZoneVisuals.initializeCollectZoneVisuals(player)
 		end
 	end
 
+	print("[CollectZoneVisuals] Initializing with total money:", totalMoney)
 	CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoney)
 end
 
