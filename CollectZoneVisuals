@@ -138,6 +138,54 @@ local function animateCashAppear(cashPart, targetCFrame)
 	return tween
 end
 
+local function animateCashDisappear(cashPart, callback)
+	-- Animate the part shrinking to size 0
+	local tweenInfo = TweenInfo.new(
+		CASH_APPEAR_TIME,
+		ANIMATION_EASING_STYLE,
+		Enum.EasingDirection.In,  -- In for disappearing
+		0,
+		false,
+		0
+	)
+
+	local goal = {Size = Vector3.new(0, 0, 0)}
+	local tween = TweenService:Create(cashPart, tweenInfo, goal)
+
+	if callback then
+		tween.Completed:Connect(function()
+			callback()
+		end)
+	end
+
+	tween:Play()
+	return tween
+end
+
+local function animateFillerDisappear(fillerPart, callback)
+	-- Animate the filler shrinking to size 0
+	local tweenInfo = TweenInfo.new(
+		FILLER_SCALE_TIME,
+		ANIMATION_EASING_STYLE,
+		Enum.EasingDirection.In,  -- In for disappearing
+		0,
+		false,
+		0
+	)
+
+	local goal = {Size = Vector3.new(0, 0, 0)}
+	local tween = TweenService:Create(fillerPart, tweenInfo, goal)
+
+	if callback then
+		tween.Completed:Connect(function()
+			callback()
+		end)
+	end
+
+	tween:Play()
+	return tween
+end
+
 local function calculateCashPositions(contentPart, cashSize, numCashParts)
 	local positions = {}
 	local orientations = {}
@@ -369,13 +417,36 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 	data.lastCashPartsCount = cashPartsInTopLayer
 
 	if needsFullRecreate then
-		-- Clear existing cash parts
-		print("[CollectZoneVisuals] Clearing all existing cash parts")
+		-- Clear existing cash parts with animation
+		print("[CollectZoneVisuals] Clearing all existing cash parts with animation")
+
+		-- Animate each cash part disappearing
 		for _, part in ipairs(data.cashParts) do
 			if part and part.Parent then
-				part:Destroy()
+				-- Animate disappear and destroy after animation completes
+				task.spawn(function()
+					animateCashDisappear(part, function()
+						if part and part.Parent then
+							part:Destroy()
+						end
+					end)
+				end)
 			end
 		end
+
+		-- Animate filler disappearing if it exists
+		if data.fillerPart and data.fillerPart.Parent and numCompleteLayers < data.lastCompleteLayers then
+			-- Only animate filler disappear if we're reducing layers (money collected)
+			task.spawn(function()
+				animateFillerDisappear(data.fillerPart, function()
+					if data.fillerPart and data.fillerPart.Parent then
+						data.fillerPart:Destroy()
+					end
+					data.fillerPart = nil
+				end)
+			end)
+		end
+
 		data.cashParts = {}
 	end
 
