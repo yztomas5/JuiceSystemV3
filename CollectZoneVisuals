@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local CollectZoneVisuals = {}
 
@@ -9,6 +10,12 @@ local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"
 -- Constants
 local MONEY_PER_CASH = 1500
 local ROW_HEIGHT = 1 -- Each complete row occupies 1 stud in height
+
+-- Animation settings
+local CASH_APPEAR_TIME = 0.3
+local FILLER_SCALE_TIME = 0.4
+local ANIMATION_EASING_STYLE = Enum.EasingStyle.Back
+local ANIMATION_EASING_DIRECTION = Enum.EasingDirection.Out
 
 -- Cache for CollectZone data per player
 local collectZoneCache = {}
@@ -108,6 +115,29 @@ local function getContentPart(collectZone)
 	return nil
 end
 
+local function animateCashAppear(cashPart, targetCFrame)
+	-- Start with the part at scale 0 (invisible)
+	local originalSize = cashPart.Size
+	cashPart.Size = Vector3.new(0, 0, 0)
+	cashPart.CFrame = targetCFrame
+
+	-- Create tween to scale up with bouncy effect
+	local tweenInfo = TweenInfo.new(
+		CASH_APPEAR_TIME,
+		ANIMATION_EASING_STYLE,
+		ANIMATION_EASING_DIRECTION,
+		0,  -- Repeat count
+		false,  -- Reverse
+		0  -- Delay
+	)
+
+	local goal = {Size = originalSize}
+	local tween = TweenService:Create(cashPart, tweenInfo, goal)
+	tween:Play()
+
+	return tween
+end
+
 local function calculateCashPositions(contentPart, cashSize, numCashParts)
 	local positions = {}
 	local orientations = {}
@@ -173,9 +203,11 @@ local function updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, 
 	end
 
 	local fillerPart = existingFiller
+	local isNewFiller = false
 
 	if not fillerPart or not fillerPart.Parent then
 		fillerPart = fillerTemplate:Clone()
+		isNewFiller = true
 	end
 
 	-- Calculate filler size and position
@@ -184,7 +216,7 @@ local function updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, 
 
 	-- Filler height is based on number of complete layers
 	local fillerHeight = numCompleteLayers * cashHeight
-	local fillerSize = Vector3.new(contentSize.X, fillerHeight, contentSize.Z)
+	local targetSize = Vector3.new(contentSize.X, fillerHeight, contentSize.Z)
 
 	-- Position filler at the bottom of content, centered
 	-- The offset is from the center of content to the center of filler
@@ -195,14 +227,54 @@ local function updateFillerPart(contentPart, fillerTemplate, numCompleteLayers, 
 	)
 
 	local fillerPos = contentCFrame:PointToWorldSpace(fillerOffset)
+	local targetCFrame = CFrame.new(fillerPos) * contentCFrame.Rotation
 
-	fillerPart.Size = fillerSize
-	fillerPart.CFrame = CFrame.new(fillerPos) * contentCFrame.Rotation
 	fillerPart.Anchored = true
 	fillerPart.CanCollide = false
 
-	if not fillerPart.Parent then
+	if isNewFiller then
+		-- New filler: start from scale 0 and animate to target size
+		fillerPart.Size = Vector3.new(0, 0, 0)
+		fillerPart.CFrame = targetCFrame
 		fillerPart.Parent = contentPart
+
+		local tweenInfo = TweenInfo.new(
+			FILLER_SCALE_TIME,
+			ANIMATION_EASING_STYLE,
+			ANIMATION_EASING_DIRECTION,
+			0,
+			false,
+			0
+		)
+
+		local goal = {Size = targetSize}
+		local tween = TweenService:Create(fillerPart, tweenInfo, goal)
+		tween:Play()
+	else
+		-- Existing filler: animate from current size to new size
+		local currentSize = fillerPart.Size
+
+		-- Only animate if size actually changed
+		if currentSize ~= targetSize then
+			local tweenInfo = TweenInfo.new(
+				FILLER_SCALE_TIME,
+				ANIMATION_EASING_STYLE,
+				ANIMATION_EASING_DIRECTION,
+				0,
+				false,
+				0
+			)
+
+			local goal = {
+				Size = targetSize,
+				CFrame = targetCFrame
+			}
+			local tween = TweenService:Create(fillerPart, tweenInfo, goal)
+			tween:Play()
+		else
+			-- Size didn't change, just update CFrame if needed
+			fillerPart.CFrame = targetCFrame
+		end
 	end
 
 	return fillerPart
@@ -325,11 +397,14 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 					-- Apply vertical offset to move to the top layer
 					local layerOffset = Vector3.new(0, numCompleteLayers * cashSize.Y, 0)
 					local finalPos = positions[i] + layerOffset
+					local targetCFrame = CFrame.new(finalPos) * orientations[i]
 
-					cashPart.CFrame = CFrame.new(finalPos) * orientations[i]
 					cashPart.Anchored = true
 					cashPart.CanCollide = false
 					cashPart.Parent = contentPart
+
+					-- Animate the cash part appearing with bouncy effect
+					animateCashAppear(cashPart, targetCFrame)
 
 					table.insert(data.cashParts, cashPart)
 				end
