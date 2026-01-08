@@ -19,7 +19,9 @@ local function getCollectZoneData(player)
 		collectZoneCache[userId] = {
 			cashParts = {},
 			fillerPart = nil,
-			lastMoneyAmount = 0
+			lastMoneyAmount = 0,
+			lastCompleteLayers = 0,
+			lastCashPartsCount = 0
 		}
 	end
 	return collectZoneCache[userId]
@@ -278,39 +280,64 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 
 	print("[CollectZoneVisuals] Actual layers:", actualTotalLayers, "Complete layers:", numCompleteLayers, "Cash parts in top layer:", cashPartsInTopLayer)
 
-	-- Clear existing cash parts
-	for _, part in ipairs(data.cashParts) do
-		if part and part.Parent then
-			part:Destroy()
-		end
+	-- Check if we need to recreate all parts (layer changed or money decreased significantly)
+	local needsFullRecreate = false
+	if numCompleteLayers ~= data.lastCompleteLayers then
+		-- Layer changed, need to reposition all parts
+		needsFullRecreate = true
+		print("[CollectZoneVisuals] Layer changed from", data.lastCompleteLayers, "to", numCompleteLayers, "- full recreate needed")
+	elseif cashPartsInTopLayer < data.lastCashPartsCount then
+		-- Money decreased, need to remove excess parts
+		needsFullRecreate = true
+		print("[CollectZoneVisuals] Cash parts decreased from", data.lastCashPartsCount, "to", cashPartsInTopLayer, "- full recreate needed")
 	end
-	data.cashParts = {}
 
-	-- Create cash parts for the top layer only
-	if cashPartsInTopLayer > 0 then
-		print("[CollectZoneVisuals] Creating", cashPartsInTopLayer, "cash parts for top layer")
-		-- Calculate positions starting from bottom, then offset to top layer
-		local positions, orientations = calculateCashPositions(contentPart, cashSize, cashPartsInTopLayer)
-		print("[CollectZoneVisuals] Calculated", #positions, "positions")
+	-- Update tracking
+	data.lastCompleteLayers = numCompleteLayers
+	data.lastCashPartsCount = cashPartsInTopLayer
 
-		for i = 1, cashPartsInTopLayer do
-			if positions[i] then
-				local cashPart = cashTemplate:Clone()
-
-				-- Apply vertical offset to move to the top layer
-				local layerOffset = Vector3.new(0, numCompleteLayers * cashSize.Y, 0)
-				local finalPos = positions[i] + layerOffset
-
-				cashPart.CFrame = CFrame.new(finalPos) * orientations[i]
-				cashPart.Anchored = true
-				cashPart.CanCollide = false
-				cashPart.Parent = contentPart
-
-				table.insert(data.cashParts, cashPart)
-				print("[CollectZoneVisuals] Created cash part", i, "at position:", finalPos)
+	if needsFullRecreate then
+		-- Clear existing cash parts
+		print("[CollectZoneVisuals] Clearing all existing cash parts")
+		for _, part in ipairs(data.cashParts) do
+			if part and part.Parent then
+				part:Destroy()
 			end
 		end
-		print("[CollectZoneVisuals] Total cash parts created:", #data.cashParts)
+		data.cashParts = {}
+	end
+
+	-- Create or add cash parts for the top layer
+	if cashPartsInTopLayer > 0 then
+		local existingCount = #data.cashParts
+		local partsToCreate = cashPartsInTopLayer - existingCount
+
+		if partsToCreate > 0 then
+			print("[CollectZoneVisuals] Adding", partsToCreate, "new cash parts (already have", existingCount, ")")
+			-- Calculate positions starting from bottom, then offset to top layer
+			local positions, orientations = calculateCashPositions(contentPart, cashSize, cashPartsInTopLayer)
+
+			-- Only create the new parts we need
+			for i = existingCount + 1, cashPartsInTopLayer do
+				if positions[i] then
+					local cashPart = cashTemplate:Clone()
+
+					-- Apply vertical offset to move to the top layer
+					local layerOffset = Vector3.new(0, numCompleteLayers * cashSize.Y, 0)
+					local finalPos = positions[i] + layerOffset
+
+					cashPart.CFrame = CFrame.new(finalPos) * orientations[i]
+					cashPart.Anchored = true
+					cashPart.CanCollide = false
+					cashPart.Parent = contentPart
+
+					table.insert(data.cashParts, cashPart)
+				end
+			end
+			print("[CollectZoneVisuals] Total cash parts now:", #data.cashParts)
+		else
+			print("[CollectZoneVisuals] No new cash parts needed (already have", existingCount, ")")
+		end
 	else
 		print("[CollectZoneVisuals] No cash parts to show in top layer")
 	end
