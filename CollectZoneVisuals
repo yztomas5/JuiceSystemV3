@@ -163,7 +163,20 @@ local function animateCashDisappear(cashPart, callback)
 end
 
 local function animateFillerDisappear(fillerPart, callback)
-	-- Animate the filler shrinking to size 0
+	-- Animate the filler shrinking down (only Y axis to 0)
+	local currentSize = fillerPart.Size
+	local currentCFrame = fillerPart.CFrame
+
+	-- Keep X and Z the same, only reduce Y to 0
+	local targetSize = Vector3.new(currentSize.X, 0, currentSize.Z)
+
+	-- Calculate new position - move down as it shrinks
+	-- The filler should sink into the ground
+	local currentY = currentCFrame.Position.Y
+	local targetY = currentY - (currentSize.Y / 2) -- Move down by half its current height
+	local targetPosition = Vector3.new(currentCFrame.Position.X, targetY, currentCFrame.Position.Z)
+	local targetCFrame = CFrame.new(targetPosition) * (currentCFrame - currentCFrame.Position)
+
 	local tweenInfo = TweenInfo.new(
 		FILLER_SCALE_TIME,
 		ANIMATION_EASING_STYLE,
@@ -173,7 +186,10 @@ local function animateFillerDisappear(fillerPart, callback)
 		0
 	)
 
-	local goal = {Size = Vector3.new(0, 0, 0)}
+	local goal = {
+		Size = targetSize,
+		CFrame = targetCFrame
+	}
 	local tween = TweenService:Create(fillerPart, tweenInfo, goal)
 
 	if callback then
@@ -434,17 +450,23 @@ function CollectZoneVisuals.updateCollectZoneVisuals(player, totalMoneyGenerated
 			end
 		end
 
-		-- Animate filler disappearing if it exists
-		if data.fillerPart and data.fillerPart.Parent and numCompleteLayers < data.lastCompleteLayers then
-			-- Only animate filler disappear if we're reducing layers (money collected)
-			task.spawn(function()
-				animateFillerDisappear(data.fillerPart, function()
-					if data.fillerPart and data.fillerPart.Parent then
-						data.fillerPart:Destroy()
-					end
-					data.fillerPart = nil
+		-- Animate filler disappearing if it exists and needs to be removed
+		if data.fillerPart and data.fillerPart.Parent then
+			-- Animate filler disappear when reducing layers or removing completely
+			local shouldAnimateFillerOut = (numCompleteLayers < data.lastCompleteLayers) or (numCompleteLayers == 0)
+
+			if shouldAnimateFillerOut then
+				task.spawn(function()
+					local fillerToRemove = data.fillerPart
+					data.fillerPart = nil -- Clear reference immediately
+
+					animateFillerDisappear(fillerToRemove, function()
+						if fillerToRemove and fillerToRemove.Parent then
+							fillerToRemove:Destroy()
+						end
+					end)
 				end)
-			end)
+			end
 		end
 
 		data.cashParts = {}
