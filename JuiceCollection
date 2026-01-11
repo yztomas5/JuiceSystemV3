@@ -221,8 +221,8 @@ function JuiceCollection.getTotalMoneyGenerated(player)
 	return totalMoneyGenerated
 end
 
-function JuiceCollection.playBonusEffect(collectPart)
-	-- Clone the bonus VFX
+function JuiceCollection.playBonusEffect(collectPart, player)
+	-- Clone the bonus VFX (Burst)
 	local bonusVFXFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("VFX"):WaitForChild("Bonus")
 	local burstTemplate = bonusVFXFolder:FindFirstChild("Burst")
 
@@ -246,7 +246,7 @@ function JuiceCollection.playBonusEffect(collectPart)
 		end
 	end
 
-	-- Play the effect once
+	-- Play the Burst effect once
 	task.spawn(function()
 		-- Activate particles
 		for _, particle in ipairs(particles) do
@@ -281,6 +281,191 @@ function JuiceCollection.playBonusEffect(collectPart)
 			burstClone:Destroy()
 		end
 	end)
+
+	-- Now create the money Bezier effect
+	task.spawn(function()
+		JuiceCollection.createMoneyBezierEffect(collectPart, player)
+	end)
+end
+
+function JuiceCollection.createMoneyBezierEffect(collectPart, player)
+	local Debris = game:GetService("Debris")
+	local TweenService = game:GetService("TweenService")
+
+	-- Load Bezier module
+	local Bezier = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"):WaitForChild("Bezier"))
+
+	-- Get templates and sounds
+	local bonusFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("VFX"):WaitForChild("Bonus")
+	local moneyTemplate = bonusFolder:FindFirstChild("Money")
+	if not moneyTemplate then
+		warn("[JuiceCollection] Money template not found")
+		return
+	end
+
+	local soundsFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Sounds"):WaitForChild("SFX"):WaitForChild("Bonus")
+	local rewardSound = soundsFolder:FindFirstChild("Reward")
+	local transitionSound = soundsFolder:FindFirstChild("Transition")
+	local collectedSound = soundsFolder:FindFirstChild("Collected")
+
+	-- Find the CollectZone for the player
+	local JuiceSystemPath = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"):WaitForChild("JuiceSystem")
+	local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"))
+	local collectZone = JuiceSystemUtils.findCollectZone(player)
+
+	if not collectZone then
+		warn("[JuiceCollection] CollectZone not found for player")
+		return
+	end
+
+	local collectZoneCollectPart = collectZone:FindFirstChild("Collect")
+	if not collectZoneCollectPart or not collectZoneCollectPart:IsA("BasePart") then
+		warn("[JuiceCollection] Collect part not found in CollectZone")
+		return
+	end
+
+	-- Configuration
+	local NUM_COINS = 5
+	local DELAY_BETWEEN_COINS = 0.2
+	local FIRST_BEZIER_DURATION = 0.5
+	local BOUNCE_HEIGHT = 2
+	local BOUNCE_DURATION = 0.3
+	local SECOND_BEZIER_DURATION = 0.6
+
+	local centro = collectPart.Position
+
+	-- Spawn each coin sequentially
+	for i = 1, NUM_COINS do
+		task.spawn(function()
+			-- Wait for this coin's turn
+			task.wait((i - 1) * DELAY_BETWEEN_COINS)
+
+			-- Calculate angle for circular distribution
+			local angulo = (i / NUM_COINS) * math.pi * 2
+			angulo = angulo + (math.random() - 0.5) * 0.4
+
+			-- Calculate direction
+			local dirX = math.cos(angulo)
+			local dirZ = math.sin(angulo)
+
+			-- First Bezier: from collectPart outwards and up
+			local radius1 = 1.5
+			local radius2 = 3
+			local height = 4
+
+			local p0 = centro
+			local p1 = centro + Vector3.new(dirX * radius1, height * 0.7, dirZ * radius1)
+			local p2 = centro + Vector3.new(dirX * radius2, height, dirZ * radius2)
+
+			-- Clone the money
+			local moneda = moneyTemplate:Clone()
+			moneda.CFrame = CFrame.new(p0)
+			moneda.Anchored = true
+			moneda.CanCollide = false
+			moneda.Parent = workspace
+
+			-- Remove the Effect sound from the cloned money (user requested this)
+			local effectSound = moneda:FindFirstChild("Effect")
+			if effectSound then
+				effectSound:Destroy()
+			end
+
+			-- First Bezier curve (outward)
+			local curvaBezier1 = Bezier.new(p0, p1, p2)
+			local tweenInfo1 = TweenInfo.new(
+				FIRST_BEZIER_DURATION,
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.Out,
+				0,
+				false,
+				0
+			)
+
+			local tween1 = curvaBezier1:CreateCFrameTween(moneda, {"CFrame"}, tweenInfo1, false)
+
+			-- Add rotation
+			local rotationTask = task.spawn(function()
+				local startTime = tick()
+				while tick() - startTime < FIRST_BEZIER_DURATION and moneda.Parent do
+					local dt = task.wait()
+					moneda.CFrame = moneda.CFrame * CFrame.Angles(0, dt * 22, 0)
+				end
+			end)
+
+			tween1:Play()
+			tween1.Completed:Wait()
+
+			-- Bounce up and play Reward sound
+			local currentPos = moneda.Position
+			local bounceUp = currentPos + Vector3.new(0, BOUNCE_HEIGHT, 0)
+
+			local bounceTween = TweenService:Create(moneda, TweenInfo.new(
+				BOUNCE_DURATION,
+				Enum.EasingStyle.Back,
+				Enum.EasingDirection.Out
+			), {Position = bounceUp})
+
+			-- Play Reward sound
+			if rewardSound then
+				local rewardClone = rewardSound:Clone()
+				rewardClone.Parent = moneda
+				rewardClone:Play()
+			end
+
+			bounceTween:Play()
+			bounceTween.Completed:Wait()
+
+			-- Second Bezier: to CollectZone
+			local p3 = moneda.Position
+			local midPoint = (p3 + collectZoneCollectPart.Position) / 2 + Vector3.new(0, 3, 0)
+			local p4 = collectZoneCollectPart.Position
+
+			local curvaBezier2 = Bezier.new(p3, midPoint, p4)
+			local tweenInfo2 = TweenInfo.new(
+				SECOND_BEZIER_DURATION,
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.In,
+				0,
+				false,
+				0
+			)
+
+			-- Play Transition sound
+			if transitionSound then
+				local transitionClone = transitionSound:Clone()
+				transitionClone.Parent = moneda
+				transitionClone:Play()
+			end
+
+			local tween2 = curvaBezier2:CreateCFrameTween(moneda, {"CFrame"}, tweenInfo2, false)
+
+			-- Continue rotation
+			task.cancel(rotationTask)
+			rotationTask = task.spawn(function()
+				local startTime = tick()
+				while tick() - startTime < SECOND_BEZIER_DURATION and moneda.Parent do
+					local dt = task.wait()
+					moneda.CFrame = moneda.CFrame * CFrame.Angles(0, dt * 22, 0)
+				end
+			end)
+
+			tween2:Play()
+			tween2.Completed:Wait()
+
+			-- Play Collected sound at CollectZone
+			if collectedSound then
+				local collectedClone = collectedSound:Clone()
+				collectedClone.Parent = collectZoneCollectPart
+				collectedClone:Play()
+				Debris:AddItem(collectedClone, collectedClone.TimeLength + 0.5)
+			end
+
+			-- Destroy the money
+			if moneda and moneda.Parent then
+				moneda:Destroy()
+			end
+		end)
+	end
 end
 
 function JuiceCollection.updateAllJuicesMoneyGeneration()
@@ -330,7 +515,7 @@ function JuiceCollection.updateAllJuicesMoneyGeneration()
 				if slotModel then
 					local collectPart = slotModel:FindFirstChild("Collect")
 					if collectPart and collectPart:IsA("BasePart") then
-						JuiceCollection.playBonusEffect(collectPart)
+						JuiceCollection.playBonusEffect(collectPart, player)
 					end
 				end
 
