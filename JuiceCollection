@@ -290,6 +290,9 @@ function JuiceCollection.updateAllJuicesMoneyGeneration()
 	for _, player in ipairs(Players:GetPlayers()) do
 		local placedJuices = player:FindFirstChild("PlacedJuices")
 		if placedJuices then
+			-- Collect all valid juices for this player
+			local validJuices = {}
+
 			for _, juiceFolder in ipairs(placedJuices:GetChildren()) do
 				if juiceFolder:IsA("Folder") then
 					local pricePerSecValue = juiceFolder:FindFirstChild("PricePerSec")
@@ -300,27 +303,47 @@ function JuiceCollection.updateAllJuicesMoneyGeneration()
 						moneyGeneratedValue and moneyGeneratedValue:IsA("IntValue") and
 						slotValue and slotValue:IsA("IntValue") then
 
-						-- Check for bonus activation (2% chance)
-						local bonusActivated = math.random() < BONUS_CHANCE
-
-						if bonusActivated then
-							-- Apply bonus multiplier
-							local bonusMoney = math.floor(pricePerSecValue.Value * BONUS_MULTIPLIER)
-							moneyGeneratedValue.Value = moneyGeneratedValue.Value + bonusMoney
-
-							-- Play bonus effect on the Collect part
-							local slotModel = JuiceSystemUtils.findSlotModel(player, slotValue.Value)
-							if slotModel then
-								local collectPart = slotModel:FindFirstChild("Collect")
-								if collectPart and collectPart:IsA("BasePart") then
-									JuiceCollection.playBonusEffect(collectPart)
-								end
-							end
-						else
-							-- Normal money generation
-							moneyGeneratedValue.Value = moneyGeneratedValue.Value + pricePerSecValue.Value
-						end
+						table.insert(validJuices, {
+							pricePerSec = pricePerSecValue,
+							moneyGenerated = moneyGeneratedValue,
+							slot = slotValue,
+							folder = juiceFolder
+						})
 					end
+				end
+			end
+
+			-- Check for global bonus activation (2% chance per player)
+			local bonusActivated = #validJuices > 0 and math.random() < BONUS_CHANCE
+
+			if bonusActivated then
+				-- Select a random juice to receive the bonus
+				local randomIndex = math.random(1, #validJuices)
+				local luckyJuice = validJuices[randomIndex]
+
+				-- Apply bonus multiplier to the lucky juice
+				local bonusMoney = math.floor(luckyJuice.pricePerSec.Value * BONUS_MULTIPLIER)
+				luckyJuice.moneyGenerated.Value = luckyJuice.moneyGenerated.Value + bonusMoney
+
+				-- Play bonus effect on the lucky juice's Collect part
+				local slotModel = JuiceSystemUtils.findSlotModel(player, luckyJuice.slot.Value)
+				if slotModel then
+					local collectPart = slotModel:FindFirstChild("Collect")
+					if collectPart and collectPart:IsA("BasePart") then
+						JuiceCollection.playBonusEffect(collectPart)
+					end
+				end
+
+				-- Apply normal generation to all other juices
+				for i, juiceData in ipairs(validJuices) do
+					if i ~= randomIndex then
+						juiceData.moneyGenerated.Value = juiceData.moneyGenerated.Value + juiceData.pricePerSec.Value
+					end
+				end
+			else
+				-- No bonus: apply normal generation to all juices
+				for _, juiceData in ipairs(validJuices) do
+					juiceData.moneyGenerated.Value = juiceData.moneyGenerated.Value + juiceData.pricePerSec.Value
 				end
 			end
 		end
