@@ -12,6 +12,10 @@ local JuiceDataStore = DataStoreService:GetDataStore("JuiceOfflineData")
 
 local COLLECTION_COOLDOWN = 1
 
+-- Bonus system constants
+local BONUS_CHANCE = 0.02 -- 2% chance (adjustable)
+local BONUS_MULTIPLIER = 1.5 -- 1.5x multiplier when bonus activates
+
 local systemTrove = Trove.new()
 
 function JuiceCollection.playMoneyEffect(collectPart)
@@ -217,7 +221,72 @@ function JuiceCollection.getTotalMoneyGenerated(player)
 	return totalMoneyGenerated
 end
 
+function JuiceCollection.playBonusEffect(collectPart)
+	-- Clone the bonus VFX
+	local bonusVFXFolder = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("VFX"):WaitForChild("Bonus")
+	local burstTemplate = bonusVFXFolder:FindFirstChild("Burst")
+
+	if not burstTemplate then
+		warn("[JuiceCollection] Bonus Burst VFX not found in ReplicatedStorage.Assets.VFX.Bonus")
+		return
+	end
+
+	local burstClone = burstTemplate:Clone()
+	burstClone.CFrame = collectPart.CFrame
+	burstClone.Parent = collectPart
+
+	-- Find all particle emitters and the sound
+	local particles = {}
+	local sound = burstClone:FindFirstChild("Effect")
+
+	for _, descendant in ipairs(burstClone:GetDescendants()) do
+		if descendant:IsA("ParticleEmitter") then
+			table.insert(particles, descendant)
+			descendant.Enabled = false
+		end
+	end
+
+	-- Play the effect once
+	task.spawn(function()
+		-- Activate particles
+		for _, particle in ipairs(particles) do
+			particle.Enabled = true
+		end
+
+		-- Play sound
+		if sound and sound:IsA("Sound") then
+			sound:Play()
+		end
+
+		-- Keep particles active for 0.5 seconds
+		task.wait(0.5)
+
+		-- Deactivate particles
+		for _, particle in ipairs(particles) do
+			particle.Enabled = false
+		end
+
+		-- Wait for sound to finish
+		if sound and sound:IsA("Sound") then
+			if sound.TimeLength > 0 then
+				task.wait(sound.TimeLength)
+			else
+				sound.Ended:Wait()
+			end
+		end
+
+		-- Destroy the effect after a small delay
+		task.wait(0.5)
+		if burstClone and burstClone.Parent then
+			burstClone:Destroy()
+		end
+	end)
+end
+
 function JuiceCollection.updateAllJuicesMoneyGeneration()
+	local JuiceSystemPath = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"):WaitForChild("JuiceSystem")
+	local JuiceSystemUtils = require(JuiceSystemPath:WaitForChild("JuiceSystemUtils"))
+
 	for _, player in ipairs(Players:GetPlayers()) do
 		local placedJuices = player:FindFirstChild("PlacedJuices")
 		if placedJuices then
@@ -225,10 +294,32 @@ function JuiceCollection.updateAllJuicesMoneyGeneration()
 				if juiceFolder:IsA("Folder") then
 					local pricePerSecValue = juiceFolder:FindFirstChild("PricePerSec")
 					local moneyGeneratedValue = juiceFolder:FindFirstChild("MoneyGenerated")
+					local slotValue = juiceFolder:FindFirstChild("Slot")
 
 					if pricePerSecValue and pricePerSecValue:IsA("IntValue") and
-						moneyGeneratedValue and moneyGeneratedValue:IsA("IntValue") then
-						moneyGeneratedValue.Value = moneyGeneratedValue.Value + pricePerSecValue.Value
+						moneyGeneratedValue and moneyGeneratedValue:IsA("IntValue") and
+						slotValue and slotValue:IsA("IntValue") then
+
+						-- Check for bonus activation (2% chance)
+						local bonusActivated = math.random() < BONUS_CHANCE
+
+						if bonusActivated then
+							-- Apply bonus multiplier
+							local bonusMoney = math.floor(pricePerSecValue.Value * BONUS_MULTIPLIER)
+							moneyGeneratedValue.Value = moneyGeneratedValue.Value + bonusMoney
+
+							-- Play bonus effect on the Collect part
+							local slotModel = JuiceSystemUtils.findSlotModel(player, slotValue.Value)
+							if slotModel then
+								local collectPart = slotModel:FindFirstChild("Collect")
+								if collectPart and collectPart:IsA("BasePart") then
+									JuiceCollection.playBonusEffect(collectPart)
+								end
+							end
+						else
+							-- Normal money generation
+							moneyGeneratedValue.Value = moneyGeneratedValue.Value + pricePerSecValue.Value
+						end
 					end
 				end
 			end
